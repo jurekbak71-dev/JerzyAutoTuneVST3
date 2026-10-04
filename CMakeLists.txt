@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(JerzyAutoTune VERSION 1.4.0)
+project(JerzyAutoTune VERSION 1.5.0)
 
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -38,3 +38,14 @@ target_link_libraries(JerzyAutoTune PRIVATE
     PUBLIC juce::juce_recommended_config_flags
            juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
+
+include(CTest)
+if(BUILD_TESTING)
+    juce_add_console_app(JerzyAutoTuneTests PRODUCT_NAME "Auto Tune regression tests")
+    juce_generate_juce_header(JerzyAutoTuneTests)
+    target_sources(JerzyAutoTuneTests PRIVATE tests/autotune_test.cpp)
+    target_compile_features(JerzyAutoTuneTests PRIVATE cxx_std_17)
+    target_include_directories(JerzyAutoTuneTests PRIVATE Source)
+    target_link_libraries(JerzyAutoTuneTests PRIVATE JerzyAutoTune juce::juce_audio_utils juce::juce_dsp signalsmith-stretch)
+    add_test(NAME autotune_gui_and_parameters COMMAND JerzyAutoTuneTests)
+endif()

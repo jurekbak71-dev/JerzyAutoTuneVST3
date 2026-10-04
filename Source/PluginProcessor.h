@@ -37,6 +37,10 @@ public:
     float getOutputPeak() const noexcept { return outputPeak.load(std::memory_order_relaxed); }
     float getInputPeak() const noexcept { return inputPeak.load(std::memory_order_relaxed); }
 
+    float getDetectedPitch() const noexcept { return displayPitch.load(std::memory_order_relaxed); }
+    float getCorrectionCents() const noexcept { return displayCorrection.load(std::memory_order_relaxed); }
+    float getCompressorReduction() const noexcept { return compressorReduction.load(std::memory_order_relaxed); }
+
 private:
     friend class JerzyAutoTuneAudioProcessorEditor;
     static APVTS::ParameterLayout createParameterLayout();
@@ -77,6 +81,8 @@ private:
     juce::AudioBuffer<float> doublerBuffer;
     std::array<std::array<Biquad, 5>, 2> vocalEq;
 
+    std::atomic<int> editorWidth { 1008 }, editorHeight { 702 };
+    std::atomic<float> displayPitch { -1.0f }, displayCorrection { 0.0f }, compressorReduction { 0.0f };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(JerzyAutoTuneAudioProcessor)
