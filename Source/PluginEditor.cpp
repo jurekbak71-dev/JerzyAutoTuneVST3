@@ -134,6 +134,8 @@ juce::Font JerzyAutoTuneAudioProcessorEditor::AnalogLookAndFeel::getTextButtonFo
 JerzyAutoTuneAudioProcessorEditor::JerzyAutoTuneAudioProcessorEditor(JerzyAutoTuneAudioProcessor& p)
     : AudioProcessorEditor(&p), processor(p)
 {
+    const int savedWidth = processor.editorWidth.load();
+    const int savedHeight = processor.editorHeight.load();
     setLookAndFeel(&analogLookAndFeel);
     setOpaque(true);
     addAndMakeVisible(surface);
@@ -218,7 +220,7 @@ JerzyAutoTuneAudioProcessorEditor::JerzyAutoTuneAudioProcessorEditor(JerzyAutoTu
     setResizable(true, true);
     setResizeLimits(840, 585, 1680, 1170);
     getConstrainer()->setFixedAspectRatio(static_cast<double>(designWidth) / designHeight);
-    setSize(processor.editorWidth.load(), processor.editorHeight.load());
+    setSize(savedWidth, savedHeight);
     startTimerHz(30);
 }
 

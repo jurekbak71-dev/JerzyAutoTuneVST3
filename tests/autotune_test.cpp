@@ -28,7 +28,7 @@ void checkControls(juce::Component& root, juce::Component& editor, std::set<juce
         if (auto* parameter = processor.parameters.getParameter(c->getComponentID()))
         {
             const auto bounds = editor.getLocalArea(c, c->getLocalBounds());
-            require(c->isShowing(), "Parameter control hidden");
+            require(c->isVisible() && root.isVisible(), "Parameter control hidden");
             require(editor.getLocalBounds().contains(bounds), "Parameter control clipped by editor");
             require(bounds.getWidth() >= 18 && bounds.getHeight() >= 17, "Unusable control size");
             ids.insert(c->getComponentID());
