@@ -1,0 +1,66 @@
+name: Build JERZY AUTO TUNE 1.4 (Windows)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Source/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure clean x64 Release build
+        run: cmake -S . -B build -A x64
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target JerzyAutoTune_VST3
+
+      - name: Verify editor and DSP are present
+        shell: pwsh
+        run: |
+          $plugin = 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3'
+          $moduleInfo = Get-Content "$plugin/Contents/Resources/moduleinfo.json" -Raw
+          if ($moduleInfo -notmatch '"Name":\s*"JERZY AUTO TUNE"' -or $moduleInfo -notmatch '"Version":\s*"1\.4\.0"') {
+            throw 'VST3 module name or version is incorrect.'
+          }
+          $binary = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes("$plugin/Contents/x86_64-win/JERZY AUTO TUNE.vst3"))
+          foreach ($requiredText in @(
+            'JERZY AUTO TUNE', 'NOTE FILTER',
+            'Gate Threshold', 'Gate Range', 'Gate Attack', 'Gate Hold', 'Gate Release',
+            'Noise Threshold', 'Noise Reduction', 'Noise Release', 'Noise High Pass',
+            'De-Esser Threshold', 'De-Esser Frequency', 'De-Esser Range', 'De-Esser Release',
+            'Saturation Drive', 'Saturation Tone', 'Saturation Mix', 'Saturation Output',
+            'Doubler Mix', 'Doubler Delay', 'Doubler Detune', 'Doubler Width',
+            'Comp Threshold', 'Comp Ratio', 'Comp Attack', 'Comp Release', 'Comp Knee', 'Comp Makeup',
+            'Limiter Ceiling',
+            'EQ Low Cut', 'EQ Body', 'EQ Mid Frequency', 'EQ Presence', 'EQ Mid Q', 'EQ Air', 'EQ High Cut',
+            'Output'
+          )) {
+            if (-not $binary.Contains($requiredText)) {
+              throw "Built VST3 is missing expected UI/parameter string: $requiredText"
+            }
+          }
+
+      - name: Package VST3
+        shell: pwsh
+        run: |
+          Compress-Archive -Path 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3' -DestinationPath 'JERZY-AUTO-TUNE-1.4-Windows-x64-VST3.zip' -Force
+
+      - name: Upload VST3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JERZY-AUTO-TUNE-1.4-Windows-x64-VST3
+          path: JERZY-AUTO-TUNE-1.4-Windows-x64-VST3.zip
+          if-no-files-found: error
+          retention-days: 14
