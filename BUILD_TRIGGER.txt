@@ -1,1 +1,2 @@
 Standalone JERZY AUTO TUNE 1.4 build trigger
+Run: migration verification
