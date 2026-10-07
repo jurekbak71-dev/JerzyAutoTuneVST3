@@ -207,6 +207,9 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
 
     inputPeak.store(0.0f, std::memory_order_relaxed);
     outputPeak.store(0.0f, std::memory_order_relaxed);
+    displayPitch.store(-1.0f, std::memory_order_relaxed);
+    displayCorrection.store(0.0f, std::memory_order_relaxed);
+    compressorReduction.store(0.0f, std::memory_order_relaxed);
 }
 
 void JerzyAutoTuneAudioProcessor::releaseResources() {}
@@ -304,6 +307,9 @@ float JerzyAutoTuneAudioProcessor::tunedRatio() const noexcept
         if (allowed && d < bestDistance) { bestDistance = d; best = static_cast<float>(candidate); }
     }
 
+    // The note mask may have no intersection with the selected scale.
+    // Never silently quantise to a disallowed chromatic fallback.
+    if (bestDistance == 100.0f) return 1.0f;
     const float corrected = detectedMidi + (best - detectedMidi) * amount;
     return std::pow(2.0f, (corrected - detectedMidi) / 12.0f);
 }
@@ -380,6 +386,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     }
     const float eqSmooth = 1.0f - std::exp(-1.0f / (0.020f * static_cast<float>(currentSampleRate)));
 
+    float blockReduction = 0.0f;
     for (int i = 0; i < samples; ++i)
     {
         float linkedCompPeak = 0.0f;
@@ -484,6 +491,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
             }
         }
 
+        blockReduction = juce::jmax(blockReduction, -reductionDb);
         const float compGain = compOn ? juce::Decibels::decibelsToGain(reductionDb) * compMakeup : 1.0f;
 
         for (int ch = 0; ch < channels; ++ch)
@@ -501,6 +509,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
             buffer.setSample(ch, i, x * outputGain);
         }
     }
+    compressorReduction.store(blockReduction, std::memory_order_relaxed);
 }
 
 void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -513,9 +522,13 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     for (int i = 0; i < samples; ++i)
     {
         float detectorSample = 0.0f;
-        for (int ch = 0; ch < channels; ++ch) detectorSample += buffer.getSample(ch, i);
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            const float sample = buffer.getSample(ch, i);
+            detectorSample += sample;
+            blockInputPeak = juce::jmax(blockInputPeak, std::abs(sample));
+        }
         detectorSample /= static_cast<float>(juce::jmax(1, channels));
-        blockInputPeak = juce::jmax(blockInputPeak, std::abs(detectorSample));
         detector[static_cast<size_t>(detectorWrite)] = detectorSample;
         detectorWrite = (detectorWrite + 1) % detectorSize;
         if (++samplesSinceAnalysis >= 512) { analysePitch(); samplesSinceAnalysis = 0; }
@@ -603,6 +616,8 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     inputPeak.store(blockInputPeak, std::memory_order_relaxed);
     outputPeak.store(blockOutputPeak, std::memory_order_relaxed);
+    displayPitch.store(detectedMidi, std::memory_order_relaxed);
+    displayCorrection.store(detectedMidi < 0.0f ? 0.0f : 1200.0f * std::log2(smoothedRatio), std::memory_order_relaxed);
 }
 
 juce::AudioProcessorEditor* JerzyAutoTuneAudioProcessor::createEditor()
@@ -612,14 +627,22 @@ juce::AudioProcessorEditor* JerzyAutoTuneAudioProcessor::createEditor()
 
 void JerzyAutoTuneAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    if (auto xml = parameters.copyState().createXml()) copyXmlToBinary(*xml, destData);
+    auto state = parameters.copyState();
+    state.setProperty("editorWidth", editorWidth.load(), nullptr);
+    state.setProperty("editorHeight", editorHeight.load(), nullptr);
+    if (auto xml = state.createXml()) copyXmlToBinary(*xml, destData);
 }
 
 void JerzyAutoTuneAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
         if (xml->hasTagName(parameters.state.getType()))
-            parameters.replaceState(juce::ValueTree::fromXml(*xml));
+        {
+            auto state = juce::ValueTree::fromXml(*xml);
+            editorWidth.store(juce::jlimit(840, 1680, static_cast<int>(state.getProperty("editorWidth", 1008))));
+            editorHeight.store(juce::jlimit(585, 1170, static_cast<int>(state.getProperty("editorHeight", 702))));
+            parameters.replaceState(state);
+        }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
