@@ -251,7 +251,7 @@ void JerzyAutoTuneAudioProcessorEditor::drawModule(juce::Graphics& g, int module
 
 void JerzyAutoTuneAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(outer);
+    JerzyAudioUI::paintChassis(g, getLocalBounds().toFloat(), JerzyAudioUI::steel());
     const float sx = static_cast<float>(getWidth()) / 1500.0f;
     const float sy = static_cast<float>(getHeight()) / 1050.0f;
     const float s = juce::jmin(sx, sy);
@@ -259,15 +259,8 @@ void JerzyAutoTuneAudioProcessorEditor::paint(juce::Graphics& g)
     const float oy = (static_cast<float>(getHeight()) - 1050.0f * s) * 0.5f;
     g.addTransform(juce::AffineTransform::translation(ox, oy).scaled(s));
 
-    g.setColour(juce::Colour(46, 48, 45));
-    g.fillRoundedRectangle(20, 18, 1460, 1014, 18.0f);
-    g.setColour(metal);
-    g.fillRoundedRectangle(35, 33, 1430, 984, 11.0f);
-    g.setColour(juce::Colour(104, 94, 75));
-    g.drawRoundedRectangle(35, 33, 1430, 984, 11.0f, 2.0f);
-
-    g.setColour(panel);
-    g.fillRoundedRectangle(55, 58, 1390, 90, 6.0f);
+    JerzyAudioUI::paintPanel(g, {20, 18, 1460, 1014}, JerzyAudioUI::steel(), 18.0f);
+    JerzyAudioUI::paintPanel(g, {55, 58, 1390, 90}, JerzyAudioUI::steel(), 6.0f);
     g.setColour(brass);
     g.setFont(juce::Font(16.0f, juce::Font::plain));
     g.drawText("JERZY AUDIO", 85, 79, 180, 24, juce::Justification::centredLeft);
