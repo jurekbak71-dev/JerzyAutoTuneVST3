@@ -36,3 +36,6 @@ cmake --build build --config Release --target JerzyAutoTune_VST3
 ```
 
 The GitHub Actions workflow builds, verifies and packages the Windows x64 VST3 artifact automatically.
+
+
+JerzyVSTGuiKit CI validation.
