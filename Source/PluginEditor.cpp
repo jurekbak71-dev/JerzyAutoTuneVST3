@@ -62,6 +62,7 @@ void addComboItems(juce::ComboBox& box, const juce::StringArray& items)
 JerzyAutoTuneAudioProcessorEditor::JerzyAutoTuneAudioProcessorEditor(JerzyAutoTuneAudioProcessor& p)
     : AudioProcessorEditor(&p), processor(p)
 {
+    setLookAndFeel(&analogLookAndFeel);
     setResizable(true, true);
     setResizeLimits(1100, 770, 2100, 1470);
     setSize(1500, 1050);
@@ -138,6 +139,7 @@ JerzyAutoTuneAudioProcessorEditor::JerzyAutoTuneAudioProcessorEditor(JerzyAutoTu
 
 JerzyAutoTuneAudioProcessorEditor::~JerzyAutoTuneAudioProcessorEditor()
 {
+    setLookAndFeel(nullptr);
     speedSlider.setLookAndFeel(nullptr);
     amountSlider.setLookAndFeel(nullptr);
     mixSlider.setLookAndFeel(nullptr);
