@@ -1,0 +1,16 @@
+name: GUI Family Windows VST3
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build VST3
+        shell: pwsh
+        run: cmake --build build --config Release --target JerzyAutoTune_VST3 --parallel
