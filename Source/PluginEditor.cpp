@@ -2,15 +2,15 @@
 
 namespace
 {
-const juce::Colour outer(25, 27, 25);
-const juce::Colour metal(177, 169, 148);
-const juce::Colour face(157, 148, 126);
-const juce::Colour faceDark(132, 124, 106);
-const juce::Colour panel(39, 42, 39);
-const juce::Colour ink(27, 29, 27);
-const juce::Colour cream(229, 221, 198);
-const juce::Colour brass(183, 145, 65);
-const juce::Colour red(154, 55, 42);
+const juce::Colour outer(13, 20, 25);
+const juce::Colour metal(134, 151, 160);
+const juce::Colour face(57, 74, 88);
+const juce::Colour faceDark(32, 44, 53);
+const juce::Colour panel(32, 44, 53);
+const juce::Colour ink(216, 229, 233);
+const juce::Colour cream(216, 229, 233);
+const juce::Colour brass(115, 200, 232);
+const juce::Colour red(202, 84, 76);
 
 const juce::StringArray noteNames { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 const std::array<const char*, 12> noteParameterIds {
@@ -326,24 +326,7 @@ void JerzyAutoTuneAudioProcessorEditor::timerCallback()
 
 void JerzyAutoTuneAudioProcessorEditor::AnalogLookAndFeel::drawRotarySlider(
     juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
-    float startAngle, float endAngle, juce::Slider&)
+    float startAngle, float endAngle, juce::Slider& slider)
 {
-    const float d = juce::jmax(18.0f, static_cast<float>(juce::jmin(width, height)) - 32.0f);
-    const float r = d * 0.5f;
-    const float cx = static_cast<float>(x) + static_cast<float>(width) * 0.5f;
-    const float cy = static_cast<float>(y) + r + 4.0f;
-    const float angle = startAngle + sliderPos * (endAngle - startAngle);
-
-    g.setColour(juce::Colour(52, 48, 40).withAlpha(0.5f));
-    g.fillEllipse(cx - r, cy - r + 3.0f, d, d);
-    juce::ColourGradient grad(juce::Colour(92, 94, 86), cx, cy - r,
-                              juce::Colour(15, 17, 16), cx, cy + r, false);
-    g.setGradientFill(grad);
-    g.fillEllipse(cx - r, cy - r, d, d);
-    g.setColour(juce::Colour(12, 14, 13));
-    g.drawEllipse(cx - r, cy - r, d, d, 2.0f);
-    g.setColour(cream);
-    g.drawLine(cx, cy, cx + std::sin(angle) * r * 0.72f, cy - std::cos(angle) * r * 0.72f, 2.4f);
-    g.setColour(brass);
-    g.fillEllipse(cx - 2.5f, cy - 2.5f, 5.0f, 5.0f);
+    JerzyAudioUI::HardwareLookAndFeel::drawRotarySlider(g,x,y,width,height,sliderPos,startAngle,endAngle,slider);
 }
