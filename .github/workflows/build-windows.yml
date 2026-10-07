@@ -1,16 +1,16 @@
-name: Build JERZY AUTO TUNE 1.4 (Windows)
+name: Build JERZY AUTO TUNE 1.5 (Windows)
 
 on:
   push:
     branches:
       - main
+      - fix/autotune-gui-1.5
     paths:
       - 'Source/**'
+      - 'tests/**'
       - 'CMakeLists.txt'
       - 'BUILD_TRIGGER.txt'
       - '.github/workflows/build-windows.yml'
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -24,17 +24,28 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure clean x64 Release build
-        run: cmake -S . -B build -A x64
+        run: cmake -S . -B build -A x64 -DBUILD_TESTING=ON
 
       - name: Build VST3
-        run: cmake --build build --config Release --target JerzyAutoTune_VST3
+        run: cmake --build build --config Release --target JerzyAutoTune_VST3 JerzyAutoTuneTests
+
+      - name: Test GUI, parameter wiring and audio regressions
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload GUI previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoTune-GUI-previews
+          path: build/gui-previews/*.png
+          if-no-files-found: warn
 
       - name: Verify editor and DSP are present
         shell: pwsh
         run: |
           $plugin = 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3'
           $moduleInfo = Get-Content "$plugin/Contents/Resources/moduleinfo.json" -Raw
-          if ($moduleInfo -notmatch '"Name":\s*"JERZY AUTO TUNE"' -or $moduleInfo -notmatch '"Version":\s*"1\.4\.0"') {
+          if ($moduleInfo -notmatch '"Name":\s*"JERZY AUTO TUNE"' -or $moduleInfo -notmatch '"Version":\s*"1\.5\.0"') {
             throw 'VST3 module name or version is incorrect.'
           }
           $binary = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes("$plugin/Contents/x86_64-win/JERZY AUTO TUNE.vst3"))
@@ -58,12 +69,12 @@ jobs:
       - name: Package VST3
         shell: pwsh
         run: |
-          Compress-Archive -Path 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3' -DestinationPath 'JERZY-AUTO-TUNE-1.4-Windows-x64-VST3.zip' -Force
+          Compress-Archive -Path 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3' -DestinationPath 'JERZY-AUTO-TUNE-1.5-Windows-x64-VST3.zip' -Force
 
       - name: Upload VST3 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: JERZY-AUTO-TUNE-1.4-Windows-x64-VST3
-          path: JERZY-AUTO-TUNE-1.4-Windows-x64-VST3.zip
+          name: JERZY-AUTO-TUNE-1.5-Windows-x64-VST3
+          path: JERZY-AUTO-TUNE-1.5-Windows-x64-VST3.zip
           if-no-files-found: error
           retention-days: 14
