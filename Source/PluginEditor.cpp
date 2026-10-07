@@ -110,6 +110,7 @@ void meter(juce::Graphics& g, const juce::String& title, float db, bool clip, in
 }
 
 JerzyAutoTuneAudioProcessorEditor::AnalogLookAndFeel::AnalogLookAndFeel()
+    : JerzyAudioUI::HardwareLookAndFeel(JerzyAudioUI::steel())
 {
     setColour(juce::Label::textColourId, cream);
     setColour(juce::ComboBox::backgroundColourId, outer);
@@ -353,6 +354,7 @@ void JerzyAutoTuneAudioProcessorEditor::paint(juce::Graphics& g) { g.fillAll(out
 
 void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
 {
+    JerzyAudioUI::paintChassis(g, getLocalBounds().toFloat(), JerzyAudioUI::steel());
     g.fillAll(outer);
     g.setColour(brass); g.fillRect(16, 16, 4, 47);
     text(g, "JERZY AUTO TUNE", { 32, 16, 430, 34 }, 27.0f, cream);
