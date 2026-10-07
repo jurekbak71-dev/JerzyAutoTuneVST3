@@ -68,3 +68,5 @@ These are not changes to the sound engine in the GUI update:
 
 A successful CI build and native editor tests do not replace testing the VST3 in FL Studio,
 including Windows display scaling at 100%, 125% and 150%.
+
+<!-- final PR cleanup validation -->
