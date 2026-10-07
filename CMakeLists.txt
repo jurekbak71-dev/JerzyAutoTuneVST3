@@ -25,6 +25,7 @@ juce_generate_juce_header(JerzyAutoTune)
 target_sources(JerzyAutoTune PRIVATE
     Source/PluginEditor.cpp
     Source/PluginEditor.h
+    Source/JerzyVSTGuiKit.h
     Source/PluginProcessor.cpp
     Source/PluginProcessor.h)
 target_compile_features(JerzyAutoTune PRIVATE cxx_std_17)
