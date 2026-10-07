@@ -39,3 +39,5 @@ The GitHub Actions workflow builds, verifies and packages the Windows x64 VST3 a
 
 
 <!-- Jerzy VST GUI System CI validation -->
+
+<!-- Jerzy GUI validation pass 2 -->
