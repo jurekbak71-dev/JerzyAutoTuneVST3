@@ -9,6 +9,8 @@ on:
       - 'CMakeLists.txt'
       - 'BUILD_TRIGGER.txt'
       - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
