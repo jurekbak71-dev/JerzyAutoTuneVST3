@@ -4,13 +4,14 @@ on:
   push:
     branches:
       - main
-      - fix/autotune-gui-1.5
     paths:
       - 'Source/**'
       - 'tests/**'
       - 'CMakeLists.txt'
       - 'BUILD_TRIGGER.txt'
       - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
