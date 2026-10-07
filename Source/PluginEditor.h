@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "JerzyVSTGuiKit.h"
 
 class JerzyAutoTuneAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                                 private juce::Timer
@@ -16,7 +17,7 @@ private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
-    class AnalogLookAndFeel final : public juce::LookAndFeel_V4
+    class AnalogLookAndFeel final : public JerzyAudioUI::HardwareLookAndFeel
     {
     public:
         AnalogLookAndFeel();
