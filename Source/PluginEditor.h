@@ -50,7 +50,13 @@ private:
     AnalogLookAndFeel analogLookAndFeel;
     Surface surface { *this };
     juce::TooltipWindow tooltips { this, 650 };
-    juce::ComboBox keyBox, scaleBox, zoomBox;
+    juce::ComboBox keyBox, scaleBox, zoomBox, engineBox;
+    juce::ToggleButton formantButton { "Preserve formants" }, limiterButton { "Final limiter" };
+    std::array<juce::Slider, 5> advancedSliders;
+    std::array<juce::Label, 5> advancedLabels;
+    std::unique_ptr<ComboAttachment> engineAttachment;
+    std::array<std::unique_ptr<ButtonAttachment>, 2> advancedButtons;
+    std::array<std::unique_ptr<SliderAttachment>, 5> advancedAttachments;
     std::array<juce::TextButton, 12> noteButtons;
     juce::TextButton allNotes { "ALL" }, noNotes { "NONE" };
     juce::Slider speedSlider, amountSlider, mixSlider;

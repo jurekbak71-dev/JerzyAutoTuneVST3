@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <signalsmith-stretch/signalsmith-stretch.h>
+#include "VocalDSP.h"
 #include <array>
 #include <atomic>
 
@@ -23,7 +24,7 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.10; }
+    double getTailLengthSeconds() const override { return 0.50; }
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
@@ -37,6 +38,8 @@ public:
     float getOutputPeak() const noexcept { return outputPeak.load(std::memory_order_relaxed); }
     float getInputPeak() const noexcept { return inputPeak.load(std::memory_order_relaxed); }
 
+    float getPitchConfidence() const noexcept { return displayConfidence.load(std::memory_order_relaxed); }
+    float getTargetNote() const noexcept { return displayTarget.load(std::memory_order_relaxed); }
     float getDetectedPitch() const noexcept { return displayPitch.load(std::memory_order_relaxed); }
     float getCorrectionCents() const noexcept { return displayCorrection.load(std::memory_order_relaxed); }
     float getCompressorReduction() const noexcept { return compressorReduction.load(std::memory_order_relaxed); }
@@ -45,7 +48,8 @@ private:
     friend class JerzyAutoTuneAudioProcessorEditor;
     static APVTS::ParameterLayout createParameterLayout();
     void analysePitch() noexcept;
-    float tunedRatio() const noexcept;
+    float tunedRatio() noexcept;
+    void collectPitch(const juce::AudioBuffer<float>&, int, int) noexcept;
     void processVocalChain(juce::AudioBuffer<float>&) noexcept;
 
     struct Biquad
@@ -57,6 +61,18 @@ private:
         void reset() noexcept { x1 = x2 = y1 = y2 = 0.0f; }
         float process(float input, float smoothing) noexcept;
     };
+
+    jerzy::PitchTracker pitchTracker;
+    jerzy::OutputLimiter finalLimiter;
+    std::array<juce::SmoothedValue<float>, 7> bypassMix;
+    juce::SmoothedValue<float> outputSmoother, formantSmoother;
+    std::atomic<float> displayConfidence { 0 }, displayTarget { -1 };
+    float noteCentre = -1.0f, heldNote = -1000.0f;
+    int pitchLatency = 0, ratioDelayWrite = 0, detectorChannel = 0;
+    std::vector<float> ratioDelay;
+    std::array<float, 2> detectorChannelEnergy {};
+    float alignedPitchRatio = 1.0f;
+    bool advanced = true;
 
     static constexpr int detectorSize = 4096;
     std::array<float, detectorSize> detector {};
@@ -81,7 +97,7 @@ private:
     juce::AudioBuffer<float> doublerBuffer;
     std::array<std::array<Biquad, 5>, 2> vocalEq;
 
-    std::atomic<int> editorWidth { 1008 }, editorHeight { 702 };
+    std::atomic<int> editorWidth { 1008 }, editorHeight { 864 };
     std::atomic<float> displayPitch { -1.0f }, displayCorrection { 0.0f }, compressorReduction { 0.0f };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
 

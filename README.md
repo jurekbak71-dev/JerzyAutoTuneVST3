@@ -1,70 +1,51 @@
-# JERZY AUTO TUNE 1.5
+# JERZY AUTO TUNE 2.0 — Advanced Vocal Processor
 
-Standalone Windows x64 VST3 vocal pitch-correction and vocal-processing plug-in for FL Studio and other VST3 hosts.
+VST3 vocal pitch correction and processing, developed from version 1.5.0 (`48207fd`) with an independent Advanced DSP engine. The target is Windows 10/11 x64, FL Studio and other VST3 hosts. Native Windows/FL Studio qualification remains required before a production release; Linux regression results do not establish commercial-product equivalence.
 
-## Signal chain
+## Processing
 
-Pitch Correction → Gate → Noise Filter → De-Esser → Saturation → Doubler → Vocal Compressor + Limiter → Vocal EQ → Output
+Pitch correction → Gate → Noise Filter → De-Esser → Saturation → Doubler → Compressor → Vocal EQ → Output → Final Limiter
 
-## Pitch correction
+- Sample-rate-aware monophonic YIN pitch tracking, 50–1200 Hz, confidence and voiced/unvoiced gating, harmonic tests and persistent note transitions.
+- Key, scale and 12-note mask; Speed, Amount and Mix; new Vibrato Preserve, Note Stability, A4 reference and independent Transpose controls.
+- Explicit spectral-envelope compensation and independent Formant Shift using the existing pinned Signalsmith Stretch library. Correction controls are aligned to the spectral processing clock.
+- Fractional interpolated doubler delay; the original detune control remains nominal modulation depth rather than a constant-cent shift.
+- Smooth 10 ms module bypasses with continuously updated states in Advanced mode. Output and formant changes are smoothed.
+- Independent stereo-linked 3 ms lookahead limiter **after** EQ and output trim. It bounds sample peaks, not intersample/true peaks. Limiter bypass keeps host latency constant.
+- Vector hardware interface, all 68 automated parameters, typed values, fine adjustment, zoom, remembered size, input/output meters, compressor reduction, detected/target note and confidence.
 
-- Key and Scale selectors
-- 12-note filter: C, C#, D, D#, E, F, F#, G, G#, A, A#, B
-- Speed
-- Amount
-- Mix
+The Noise Filter retains the original expander/high-pass design; it is not a learned spectral denoiser. This release does not implement graphical offline note editing, MIDI-controlled tuning or polyphonic processing.
 
-## Vocal processing controls
+## Existing sessions
 
-- Gate: Threshold, Range, Attack, Hold, Release
-- Noise Filter: Threshold, Reduction, Release, High-Pass
-- De-Esser: Threshold, Frequency, Range, Release
-- Saturation: Drive, Tone, Mix, Output
-- Doubler: Mix, Delay, Detune, Width
-- Compressor + Limiter: Threshold, Ratio, Attack, Release, Knee, Makeup, Limiter Ceiling
-- Vocal EQ: Low Cut, Body, Mid Frequency, Presence, Mid Q, Air, High Cut, Output
+The original 60 parameter IDs, order, ranges and defaults, APVTS state type and VST3 identity (`JzAu` / `JzB4`, `audio.jerzy.autotune.v14`) are retained. Eight parameters are appended. Old states automatically select **Legacy 1.5**, retaining the original detector, doubler and soft clipper. Choose **Advanced** to use the new DSP. Legacy mode deliberately retains its old DSP limitations.
 
-All exposed controls are VST3 parameters and can be automated by the host.
+The final 3 ms delay is reported to the host in both modes. Window height is clamped to the new minimum of 720 pixels. Check real project recall and PDC in FL Studio before replacing an installed production version. Engine selection is best made before playback.
 
-## Build
+## Windows x64 build and tests
 
-Requires CMake and Visual Studio on Windows. Dependencies are fetched automatically.
+Requires CMake 3.24+, Visual Studio 2022 with C++ desktop tools, Git and Internet access for the pinned JUCE 8.0.6 and Signalsmith dependencies.
 
 ```powershell
-cmake -S . -B build -A x64
-cmake --build build --config Release --target JerzyAutoTune_VST3
+cmake -S . -B build -A x64 -DBUILD_TESTING=ON
+cmake --build build --config Release --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSPTests --parallel 4
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-The GitHub Actions workflow builds, verifies and packages the Windows x64 VST3 artifact automatically.
+The plugin bundle is `build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3`. The Windows workflow builds all three targets, runs both suites, verifies module metadata and packages the bundle. Updating the workflow here does not mean that a GitHub Actions run has executed.
 
-## 1.5 GUI update
+## Cloud Linux development
 
-- Default 1008 x 702 window; vector zoom 75-150% (minimum 840 x 585).
-- A single transformed surface keeps panels, fonts, text entry and mouse targets aligned.
-- All 60 host parameters remain accessible. The seven vocal processors are always visible;
-  compressor and EQ use two rows. Output trim is separate and stays active with EQ bypassed.
-- Window size is restored on reopen and saved in host state; existing parameter IDs and the
-  VST3 identity are unchanged, so 1.4 sessions remain compatible.
-- Editable values with units, double-click reset, fine adjustment with Shift, tooltips,
-  explicit module bypass indication, input/output dBFS meters and compressor gain reduction.
-- The note filter indicates the effective scale/mask intersection. ALL and NONE edit the mask.
-  An empty intersection now bypasses pitch correction instead of selecting a forbidden note.
-- Actual editor snapshots and tests cover all parameters, automation, small/large/non-proportional
-  windows, transformed mouse targets, reopen/restore, finite audio, note-mask handling and stereo metering.
+This task's local toolchain and JUCE headers/libraries live outside the checkout under `/workspace/.jerzy-env`. No system administrator access is required. Installation/start instructions are saved separately in the cloud environment configuration.
 
-## Remaining DSP improvements identified during review
+```bash
+source /workspace/.jerzy-env/activate.sh
+cd /workspace/JerzyAutoTuneVST3
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_CXX_STANDARD_LIBRARIES=-flto=2
+cmake --build build --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSPTests --parallel 4
+xvfb-run -a ctest --test-dir build --output-on-failure
+```
 
-These are not changes to the sound engine in the GUI update:
+The `-flto=2` override is specific to the cloud GCC toolchain and limits link-time parallelism. Do not pass it to MSVC. GUI snapshots are generated in `build/gui-previews`.
 
-1. The current limiter is a `tanh` soft clipper before EQ/output. It does not guarantee the final
-   output ceiling. A dedicated final limiter with oversampling/lookahead needs separate audio tests.
-2. Doubler uses integer delay taps. Fractional interpolation would reduce modulation stepping;
-   the detune label is nominal modulation depth rather than calibrated constant cents.
-3. Pitch detection uses fixed sample lags (44-850). At 96 kHz it cannot cover the same low vocal
-   range as at 44.1/48 kHz. Scale lag limits and analysis windows with sample rate.
-4. Bypassing processors currently switches processing immediately. Short crossfades and parameter
-   smoothing are desirable for click-free live automation.
-5. The noise filter is an expander plus high-pass filter, not a learned spectral denoiser.
-
-A successful CI build and native editor tests do not replace testing the VST3 in FL Studio,
-including Windows display scaling at 100%, 125% and 150%.
+See [baseline audit](docs/AUDIT-1.5.md), [DSP design and limits](docs/DSP-2.0.md) and [validation record](docs/VALIDATION.md).

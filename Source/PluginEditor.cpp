@@ -2,7 +2,7 @@
 
 namespace
 {
-constexpr int designWidth = 1120, designHeight = 780;
+constexpr int designWidth = 1120, designHeight = 960;
 const juce::Colour outer(22, 24, 24), panel(34, 38, 38), face(66, 68, 62);
 const juce::Colour cream(239, 233, 213), muted(179, 183, 172), brass(223, 179, 90);
 const juce::Colour green(116, 203, 166), red(242, 108, 96);
@@ -74,7 +74,7 @@ const std::array<const char*, 36> hints {
     "Blend the delayed voice.", "Base delay of the doubled voice.", "Depth of delay modulation (nominal cents).", "Stereo width of the doubled voice.",
     "Level above which compression begins.", "Compression ratio above threshold.", "Compressor attack time.",
     "Compressor recovery time.", "Width of the soft transition around threshold.", "Gain after compression.",
-    "Soft-clip ceiling before EQ and output trim; later gain can exceed it.",
+    "Advanced: final sample-peak ceiling after EQ/output. Legacy: soft clipping before EQ.",
     "High-pass cutoff.", "Low shelf at 160 Hz.", "Centre frequency of the presence band.",
     "Presence-band gain.", "Presence bandwidth: larger Q is narrower.", "High shelf at 10 kHz.", "Low-pass cutoff.",
     "Final output trim. Remains active when EQ is bypassed."
@@ -216,10 +216,33 @@ JerzyAutoTuneAudioProcessorEditor::JerzyAutoTuneAudioProcessorEditor(JerzyAutoTu
     }
     keyBox.onChange = [this] { updateControlStates(); };
     scaleBox.onChange = [this] { updateControlStates(); };
+    engineBox.setComponentID("engineMode"); engineBox.addItemList({"Legacy 1.5", "Advanced"},1);
+    engineBox.setTooltip("Legacy recalls the original engine; Advanced enables tracking, expression, formants and final limiting.");
+    surface.addAndMakeVisible(engineBox);
+    engineAttachment=std::make_unique<ComboAttachment>(processor.parameters,"engineMode",engineBox);
+    formantButton.setComponentID("formantEnabled"); limiterButton.setComponentID("limiterEnabled");
+    surface.addAndMakeVisible(formantButton); surface.addAndMakeVisible(limiterButton);
+    formantButton.setTooltip("Keep the vocal spectral envelope independent of pitch correction; Formant Shift changes its position.");
+    limiterButton.setTooltip("Stereo-linked 3 ms lookahead sample-peak limiter after output trim. Not a true-peak limiter.");
+    advancedButtons[0]=std::make_unique<ButtonAttachment>(processor.parameters,"formantEnabled",formantButton);
+    advancedButtons[1]=std::make_unique<ButtonAttachment>(processor.parameters,"limiterEnabled",limiterButton);
+    const char* ids[]={"vibratoPreserve","noteStability","referenceHz","formantShift","transpose"};
+    const char* names[]={"VIBRATO","STABILITY","REFERENCE A4","FORMANT SHIFT","TRANSPOSE"};
+    const char* tips[]={"Preserve pitch movement around the slowly tracked note centre. Zero gives full instantaneous correction.",
+        "Hysteresis when selecting a new target note; reduces chatter at scale boundaries.","Tuning reference for A4.",
+        "Independent spectral-envelope shift in semitones.","Additional pitch transposition in semitones."};
+    const char* units[]={" %"," %"," Hz"," st"," st"};
+    for(size_t i=0;i<advancedSliders.size();++i)
+    {
+        configureSlider(advancedSliders[i],ids[i],tips[i]);
+        advancedSliders[i].setTextValueSuffix(units[i]);
+        configureLabel(advancedLabels[i],names[i]);
+        advancedAttachments[i]=std::make_unique<SliderAttachment>(processor.parameters,ids[i],advancedSliders[i]);
+    }
     layoutControls();
     updateControlStates();
     setResizable(true, true);
-    setResizeLimits(840, 585, 1680, 1170);
+    setResizeLimits(840, 720, 1680, 1440);
     getConstrainer()->setFixedAspectRatio(static_cast<double>(designWidth) / designHeight);
     setSize(savedWidth, savedHeight);
     startTimerHz(30);
@@ -261,6 +284,15 @@ void JerzyAutoTuneAudioProcessorEditor::configureLabel(juce::Label& label, const
 void JerzyAutoTuneAudioProcessorEditor::layoutControls()
 {
     zoomBox.setBounds(998, 22, 90, 28);
+    engineBox.setBounds(32, 815, 210, 29);
+    formantButton.setBounds(32, 854, 210, 25);
+    limiterButton.setBounds(32, 888, 210, 25);
+    for(size_t i=0;i<advancedSliders.size();++i)
+    {
+        const int x=275+static_cast<int>(i)*162;
+        advancedSliders[i].setBounds(x,802,146,106);
+        advancedLabels[i].setBounds(x,910,146,19);
+    }
     keyLabel.setBounds(32, 121, 62, 18); keyBox.setBounds(32, 142, 82, 29);
     scaleLabel.setBounds(128, 121, 96, 18); scaleBox.setBounds(128, 142, 146, 29);
     allNotes.setBounds(280, 142, 48, 29); noNotes.setBounds(332, 142, 48, 29);
@@ -302,7 +334,7 @@ void JerzyAutoTuneAudioProcessorEditor::resized()
     const int percent = juce::roundToInt(scale * 100.0f);
     zoomBox.setSelectedId(0, juce::dontSendNotification);
     zoomBox.setText(juce::String(percent) + "%", juce::dontSendNotification);
-    if (getWidth() >= 840 && getHeight() >= 585)
+    if (getWidth() >= 840 && getHeight() >= 720)
     {
         processor.editorWidth.store(getWidth()); processor.editorHeight.store(getHeight());
     }
@@ -347,6 +379,13 @@ void JerzyAutoTuneAudioProcessorEditor::updateControlStates()
             vocalLabels[i].setAlpha(on ? 1.0f : 0.48f);
         }
     }
+    const bool advanced=processor.parameters.getRawParameterValue("engineMode")->load()>=.5f;
+    for(auto& control : advancedSliders) control.setAlpha(advanced ? 1.f : .45f);
+    formantButton.setAlpha(advanced ? 1.f : .45f); limiterButton.setAlpha(advanced ? 1.f : .45f);
+    if(advanced && processor.parameters.getRawParameterValue("limiterEnabled")->load()>=.5f)
+    {
+        vocalSliders[27].setAlpha(1.f); vocalLabels[27].setAlpha(1.f);
+    }
     surface.repaint();
 }
 
@@ -354,12 +393,11 @@ void JerzyAutoTuneAudioProcessorEditor::paint(juce::Graphics& g) { g.fillAll(out
 
 void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
 {
-    JerzyAudioUI::paintChassis(g, getLocalBounds().toFloat(), JerzyAudioUI::steel());
-    g.fillAll(outer);
+    JerzyAudioUI::paintChassis(g, surface.getLocalBounds().toFloat(), JerzyAudioUI::steel());
     g.setColour(brass); g.fillRect(16, 16, 4, 47);
     text(g, "JERZY AUTO TUNE", { 32, 16, 430, 34 }, 27.0f, cream);
-    text(g, "PITCH CORRECTION  /  VOCAL CHANNEL", { 33, 50, 440, 18 }, 11.0f, muted);
-    text(g, "1.5", { 850, 25, 55, 24 }, 14.0f, brass, juce::Justification::centredRight);
+    text(g, "ADVANCED VOCAL PROCESSOR", { 33, 50, 440, 18 }, 11.0f, muted);
+    text(g, "2.0", { 850, 25, 55, 24 }, 14.0f, brass, juce::Justification::centredRight);
     text(g, "UI SIZE", { 923, 25, 68, 24 }, 11.0f, muted);
     g.setColour(panel); g.fillRoundedRectangle(16.0f, 84.0f, 1088.0f, 185.0f, 9.0f);
     text(g, "01  PITCH CORRECTION", { 32, 93, 350, 22 }, 13.0f, brass);
@@ -380,6 +418,10 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
     g.setColour(outer); g.fillRoundedRectangle(gr, 3.0f);
     g.setColour(brass); g.fillRoundedRectangle(gr.withWidth(gr.getWidth() * juce::jlimit(0.0f, 1.0f, displayedReduction / 24.0f)), 3.0f);
     text(g, juce::String(displayedReduction, 1) + " dB", { 960, 212, 68, 22 }, 11.0f, brass, juce::Justification::centredRight);
+    const auto confidence=juce::String(juce::roundToInt(processor.getPitchConfidence()*100.f));
+    const float target=processor.getTargetNote();
+    text(g, "CONF " + confidence + "%   TARGET " + (target<0 ? juce::String("--") : noteNames[(juce::roundToInt(target)%12+12)%12]),
+         {735,239,292,17},10.5f,muted);
     text(g, "02  VOCAL PROCESSING", { 16, 275, 420, 22 }, 12.0f, muted);
     for (size_t i = 0; i < modules.size(); ++i)
     {
@@ -390,9 +432,11 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
         g.setColour(enabled ? brass : muted); g.fillRoundedRectangle(static_cast<float>(r.getX() + 10), static_cast<float>(r.getY() + 14), 3.0f, 10.0f, 1.0f);
         text(g, modules[i].title, { r.getX() + 21, r.getY() + 7, r.getWidth() - 82, 23 }, 12.0f, enabled ? cream : muted);
     }
-    text(g, "PITCH > GATE > NOISE > DE-ESSER > SATURATION > DOUBLER > COMP / LIMITER > EQ > OUT",
-         { 18, 744, 850, 20 }, 10.5f, muted);
-    text(g, "Double-click: reset", { 883, 744, 220, 20 }, 11.0f, muted, juce::Justification::centredRight);
+    g.setColour(panel); g.fillRoundedRectangle(16.f,780.f,1088.f,153.f,9.f);
+    text(g,"03  ADVANCED ENGINE",{32,785,250,22},12.f,brass);
+    text(g, "PITCH > GATE > NOISE > DE-ESS > SAT > DOUBLE > COMP > EQ > OUT > LIMIT",
+         { 18, 937, 850, 20 }, 10.5f, muted);
+    text(g, "Double-click: reset", { 883, 937, 220, 20 }, 11.0f, muted, juce::Justification::centredRight);
 }
 
 void JerzyAutoTuneAudioProcessorEditor::timerCallback()

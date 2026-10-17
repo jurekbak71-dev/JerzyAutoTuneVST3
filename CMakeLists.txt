@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(JerzyAutoTune VERSION 1.5.0)
+project(JerzyAutoTune VERSION 2.0.0)
 
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -27,7 +27,8 @@ target_sources(JerzyAutoTune PRIVATE
     Source/PluginEditor.h
     Source/JerzyVSTGuiKit.h
     Source/PluginProcessor.cpp
-    Source/PluginProcessor.h)
+    Source/PluginProcessor.h
+    Source/VocalDSP.h)
 target_compile_features(JerzyAutoTune PRIVATE cxx_std_17)
 target_compile_options(JerzyAutoTune PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
 target_compile_definitions(JerzyAutoTune PUBLIC
@@ -49,4 +50,8 @@ if(BUILD_TESTING)
     target_include_directories(JerzyAutoTuneTests PRIVATE Source)
     target_link_libraries(JerzyAutoTuneTests PRIVATE JerzyAutoTune juce::juce_audio_utils juce::juce_dsp signalsmith-stretch)
     add_test(NAME autotune_gui_and_parameters COMMAND JerzyAutoTuneTests)
+    add_executable(JerzyVocalDSPTests tests/vocal_dsp_test.cpp)
+    target_compile_features(JerzyVocalDSPTests PRIVATE cxx_std_17)
+    target_include_directories(JerzyVocalDSPTests PRIVATE Source)
+    add_test(NAME vocal_dsp_regressions COMMAND JerzyVocalDSPTests)
 endif()
