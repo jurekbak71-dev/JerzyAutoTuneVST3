@@ -26,7 +26,9 @@ Generated VST3 moduleinfo reports version 2.0.0 with the existing component/cont
 
 ## Required target-platform qualification
 
-Windows 10/11 x64 and FL Studio are unavailable in this Linux machine. The updated Windows Actions workflow has not been run from this task. Remaining checks are native compilation and VST3 loading, existing 1.5 project recall, host bypass and PDC, live automation and playback restarts, offline export, multiple instances, DPI 100/125/150%, and listening/quality assessment on real vocal recordings. No comparison establishing parity with a commercial processor has been performed.
+Native Windows CI completed successfully on 2026-10-17: [run #29](https://github.com/jurekbak71-dev/JerzyAutoTuneVST3/actions/runs/39047772339), source commit 9b4ba7ecdbf408964a7e9afd4b09ea5fb70e73f0. The job built the Windows x64 VST3 and both regression executables, passed its CTest step, verified module metadata/binary strings and uploaded the Windows package. Artifact ID 12106608112, size 2.27 MB, archive digest sha256:f0799c0bb9eaca83f7f3689f4e6ce8da87e1a02cd461a40fcd4e191419d910ba.
+
+FL Studio is unavailable in this machine. Remaining checks are native host loading, existing 1.5 project recall in FL Studio, host bypass and PDC, live automation and playback restarts, offline export, multiple instances, DPI 100/125/150%, and listening/quality assessment on real vocal recordings. No comparison establishing parity with a commercial processor has been performed.
 
 The limiter bounds sample peaks, not true peaks. The engine retains a substantial spectral-processing latency; no low-latency monitoring mode is claimed. Noise filtering remains an expander/HPF. The implementation is a release candidate for native qualification.
 
