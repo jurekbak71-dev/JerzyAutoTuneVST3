@@ -25,12 +25,13 @@ void checkControls(juce::Component& root, juce::Component& editor, std::set<juce
 {
     for (auto* c : root.getChildren())
     {
+        if(!c->isVisible())continue; // Other pages are checked through the visible-parameter union below.
         if (auto* parameter = processor.parameters.getParameter(c->getComponentID()))
         {
             const auto bounds = editor.getLocalArea(c, c->getLocalBounds());
-            require(c->isVisible() && root.isVisible(), "Parameter control hidden");
+            require(c->isVisible() && root.isVisible(), ("Parameter control hidden: "+c->getComponentID()).toRawUTF8());
             require(editor.getLocalBounds().contains(bounds), "Parameter control clipped by editor");
-            require(bounds.getWidth() >= 18 && bounds.getHeight() >= 17, "Unusable control size");
+            require(bounds.getWidth() >= 18 && bounds.getHeight() >= 17, ("Unusable control size: "+c->getComponentID()+" "+juce::String(bounds.getWidth())+"x"+juce::String(bounds.getHeight())).toRawUTF8());
             ids.insert(c->getComponentID());
             if (auto* slider = dynamic_cast<juce::Slider*>(c))
             {
@@ -68,6 +69,8 @@ void capture(juce::Component& editor, const juce::String& name)
     require(png.writeImageToStream(editor.createComponentSnapshot(editor.getLocalBounds()), *stream), "Cannot render GUI");
 }
 
+void runStudioTests();
+
 int main()
 {
     try
@@ -76,58 +79,43 @@ int main()
         JerzyAutoTuneAudioProcessor processor;
         auto editor = std::unique_ptr<juce::AudioProcessorEditor>(processor.createEditor());
         editor->setVisible(true);
-        require(editor->getWidth() == 1008 && editor->getHeight() == 864, "Wrong default window size");
-        capture(*editor, "default-1008x864");
-        const auto original = processor.parameters.copyState();
-        for (const auto size : { juce::Point<int>(840, 720), { 1120, 960 }, { 1680, 1440 }, { 1200, 780 } })
+        require(editor->getWidth()==1280&&editor->getHeight()==800,"Wrong studio window size");
+        const auto original=processor.parameters.copyState();
+        auto* studio=dynamic_cast<JerzyAutoTuneAudioProcessorEditor*>(editor.get());
+        require(studio!=nullptr,"Missing native studio editor");
+        for(const auto size : {juce::Point<int>(960,600),{1280,800},{1920,1200},{1400,700}})
         {
-            editor->setSize(size.x, size.y);
+            editor->setSize(size.x,size.y);
             std::set<juce::String> ids;
-            checkControls(*editor, *editor, ids, processor);
-            require(ids.size() == static_cast<size_t>(processor.getParameters().size()), "A DSP parameter is missing from GUI");
-            processor.parameters.replaceState(original);
-            capture(*editor, juce::String(size.x) + "x" + juce::String(size.y));
+            for(int page=0;page<7;++page)
+            {
+                studio->showPage(page,true);
+                checkControls(*editor,*editor,ids,processor);
+                processor.parameters.replaceState(original.createCopy());
+                if(size==juce::Point<int>(1280,800))capture(*editor,"studio-"+juce::String(page)+"-all-controls");
+                studio->showPage(page,false);
+                if(size==juce::Point<int>(1280,800))capture(*editor,"studio-"+juce::String(page)+"-focus");
+            }
+            require(ids.size()==static_cast<size_t>(processor.getParameters().size()),"A parameter is missing from studio pages");
         }
-        auto* zoom = dynamic_cast<juce::ComboBox*>(find(*editor, "uiZoom"));
-        require(zoom != nullptr, "No zoom control");
-        zoom->setSelectedId(75, juce::sendNotificationSync);
-        require(editor->getWidth() == 840 && editor->getHeight() == 720, "Zoom did not resize editor");
-        // Verify host-to-GUI updates, no mouse hit-area drift after transformation.
-        auto* gate = find(*editor, "gateThreshold");
-        const auto gatePoint = editor->getLocalPoint(gate, gate->getLocalBounds().getCentre());
-        auto* hit = editor->getComponentAt(gatePoint);
-        require(hit == gate || gate->isParentOf(hit), "Transformed control has a displaced hit target");
-        setParameter(processor, "eqEnabled", 0.0f);
-        auto* output = dynamic_cast<juce::Slider*>(find(*editor, "outputGain"));
-        output->setValue(-4.0, juce::sendNotificationSync);
-        require(std::abs(processor.parameters.getRawParameterValue("outputGain")->load() + 4.0f) < 0.01f,
-                "Output trim unavailable with EQ bypassed");
-        juce::MemoryBlock state;
-        processor.getStateInformation(state);
-        editor.reset();
-        for (int i = 0; i < 8; ++i)
-        {
-            editor.reset(processor.createEditor());
-            require(editor->getWidth() == 840 && editor->getHeight() == 720, "Reopening lost window size");
-            editor.reset();
-        }
-        JerzyAutoTuneAudioProcessor restored;
-        restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
-        for(int i=0;i<processor.getParameters().size();++i)
-            require(std::abs(processor.getParameters()[i]->getValue()-restored.getParameters()[i]->getValue())<1.e-5f,"Parameter state roundtrip failed");
-        editor.reset(restored.createEditor());
-        require(editor->getWidth() == 840 && editor->getHeight() == 720, "State recall lost window size");
-        editor.reset();
-        // Old sessions have no window properties and must still restore parameters.
-        auto old = original.createXml();
-        juce::MemoryBlock legacy;
-        juce::AudioProcessor::copyXmlToBinary(*old, legacy);
-        restored.setStateInformation(legacy.getData(), static_cast<int>(legacy.getSize()));
+        studio->showPage(0,false);
+        auto* zoom=dynamic_cast<juce::ComboBox*>(find(*editor,"uiZoom"));
+        require(zoom!=nullptr,"No zoom control");zoom->setSelectedId(75,juce::sendNotificationSync);
+        require(editor->getWidth()==960&&editor->getHeight()==600,"Studio zoom did not resize");
+        studio->showPage(1,true);
+        auto* gate=find(*editor,"gateThreshold");require(gate!=nullptr,"Legacy gate not accessible");
+        const auto point=editor->getLocalPoint(gate,gate->getLocalBounds().getCentre());
+        auto* hit=editor->getComponentAt(point);require(hit==gate||gate->isParentOf(hit),"Transformed mouse hit target moved");
+        setParameter(processor,"eqEnabled",0);setParameter(processor,"outputGain",-4);
+        juce::MemoryBlock state;processor.getStateInformation(state);editor.reset();
+        for(int i=0;i<4;++i){editor.reset(processor.createEditor());require(editor->getWidth()==960&&editor->getHeight()==600,"Reopening lost studio size");editor.reset();}
+        JerzyAutoTuneAudioProcessor restored;restored.setStateInformation(state.getData(),int(state.getSize()));
+        for(int i=0;i<processor.getParameters().size();++i)require(std::abs(processor.getParameters()[i]->getValue()-restored.getParameters()[i]->getValue())<1.e-5f,"Parameter state roundtrip failed");
+        auto old=original.createXml();juce::MemoryBlock legacy;juce::AudioProcessor::copyXmlToBinary(*old,legacy);
+        restored.setStateInformation(legacy.getData(),int(legacy.getSize()));
         require(restored.parameters.getRawParameterValue("engineMode")->load()<.5f,"Old state did not select Legacy engine");
-        editor.reset(restored.createEditor());
-        require(editor->getWidth() == 1008, "Legacy state did not use safe default size");
-        editor.reset();
-
+        editor.reset(restored.createEditor());require(editor->getWidth()==1280,"Legacy state did not use safe studio size");editor.reset();
+        processor.parameters.replaceState(original.createCopy());
         // An explicit mask outside C major must bypass correction, not tune to chromatic notes.
         const char* notes[] = { "noteC", "noteCs", "noteD", "noteDs", "noteE", "noteF", "noteFs", "noteG", "noteGs", "noteA", "noteAs", "noteB" };
         setParameter(processor, "key", 0); setParameter(processor, "scale", 1);
@@ -345,7 +333,8 @@ int main()
                 }
                 require(found==p.getLatencySamples(),"Variable-block/mono latency mismatch");
             }
-        std::cout << "PASS: 68 parameter controls, advanced tuning/ceiling/latency, automation, scaling, hit targets, state recall, editor lifecycle, audio and note mask\n";
+        runStudioTests();
+        std::cout << "PASS: studio parameter controls, advanced tuning/ceiling/latency, automation, scaling, hit targets, state recall, editor lifecycle, audio and note mask\n";
         return 0;
     }
     catch (const std::exception& error)

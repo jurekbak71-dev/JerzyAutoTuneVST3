@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
-project(JerzyAutoTune VERSION 2.0.0)
+project(JerzyAutoTune VERSION 3.0.0)
+
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -19,8 +23,10 @@ juce_add_plugin(JerzyAutoTune
     PLUGIN_MANUFACTURER_CODE JzAu
     PLUGIN_CODE JzB4
     FORMATS VST3
+    NEEDS_MIDI_INPUT TRUE
     PRODUCT_NAME "JERZY AUTO TUNE")
 
+juce_add_binary_data(JerzyStudioAssets SOURCES Source/Assets/steel_texture.png)
 juce_generate_juce_header(JerzyAutoTune)
 target_sources(JerzyAutoTune PRIVATE
     Source/PluginEditor.cpp
@@ -28,7 +34,9 @@ target_sources(JerzyAutoTune PRIVATE
     Source/JerzyVSTGuiKit.h
     Source/PluginProcessor.cpp
     Source/PluginProcessor.h
-    Source/VocalDSP.h)
+    Source/VocalDSP.h
+    Source/StudioDSP.h
+    Source/StudioParameters.h)
 target_compile_features(JerzyAutoTune PRIVATE cxx_std_17)
 target_compile_options(JerzyAutoTune PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
 target_compile_definitions(JerzyAutoTune PUBLIC
@@ -36,19 +44,23 @@ target_compile_definitions(JerzyAutoTune PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0)
 target_link_libraries(JerzyAutoTune PRIVATE
     juce::juce_audio_utils juce::juce_dsp
-    signalsmith-stretch
+    signalsmith-stretch JerzyStudioAssets
     PUBLIC juce::juce_recommended_config_flags
-           juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
+
+option(JERZY_ENABLE_LTO "Enable release link-time optimization" ON)
+if(JERZY_ENABLE_LTO)
+    target_link_libraries(JerzyAutoTune PUBLIC juce::juce_recommended_lto_flags)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
     juce_add_console_app(JerzyAutoTuneTests PRODUCT_NAME "Auto Tune regression tests")
     juce_generate_juce_header(JerzyAutoTuneTests)
-    target_sources(JerzyAutoTuneTests PRIVATE tests/autotune_test.cpp)
+    target_sources(JerzyAutoTuneTests PRIVATE tests/autotune_test.cpp tests/studio_test.cpp)
     target_compile_features(JerzyAutoTuneTests PRIVATE cxx_std_17)
     target_include_directories(JerzyAutoTuneTests PRIVATE Source)
-    target_link_libraries(JerzyAutoTuneTests PRIVATE JerzyAutoTune juce::juce_audio_utils juce::juce_dsp signalsmith-stretch)
+    target_link_libraries(JerzyAutoTuneTests PRIVATE JerzyAutoTune JerzyStudioAssets juce::juce_audio_utils juce::juce_dsp signalsmith-stretch)
     add_test(NAME autotune_gui_and_parameters COMMAND JerzyAutoTuneTests)
     add_executable(JerzyVocalDSPTests tests/vocal_dsp_test.cpp)
     target_compile_features(JerzyVocalDSPTests PRIVATE cxx_std_17)

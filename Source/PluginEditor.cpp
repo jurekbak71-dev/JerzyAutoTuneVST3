@@ -1,472 +1,421 @@
 #include "PluginEditor.h"
+#include <BinaryData.h>
 
 namespace
 {
-constexpr int designWidth = 1120, designHeight = 960;
-const juce::Colour outer(22, 24, 24), panel(34, 38, 38), face(66, 68, 62);
-const juce::Colour cream(239, 233, 213), muted(179, 183, 172), brass(223, 179, 90);
-const juce::Colour green(116, 203, 166), red(242, 108, 96);
-const juce::StringArray noteNames { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-const std::array<const char*, 12> noteParameterIds {
-    "noteC", "noteCs", "noteD", "noteDs", "noteE", "noteF",
-    "noteFs", "noteG", "noteGs", "noteA", "noteAs", "noteB"
-};
-
-const std::array<const char*, 36> controlIds {
-    "gateThreshold", "gateRange", "gateAttack", "gateHold", "gateRelease",
-    "noiseThreshold", "noiseReduction", "noiseRelease", "noiseHighPass",
-    "deEsserThreshold", "deEsserFreq", "deEsserAmount", "deEsserRelease",
-    "satDrive", "satTone", "satMix", "satOutput",
-    "doublerAmount", "doublerDelay", "doublerDetune", "doublerWidth",
-    "compThreshold", "compRatio", "compAttack", "compRelease", "compKnee", "compMakeup", "limiterCeiling",
-    "eqLowCut", "eqLow", "eqMidFreq", "eqMid", "eqMidQ", "eqHigh", "eqHighCut", "outputGain"
-};
-
-const std::array<const char*, 36> controlLabels {
-    "THRESH", "RANGE", "ATTACK", "HOLD", "RELEASE",
-    "THRESH", "REDUCE", "RELEASE", "HIGH-PASS",
-    "THRESH", "FREQ", "RANGE", "RELEASE",
-    "DRIVE", "TONE", "MIX", "OUTPUT",
-    "MIX", "DELAY", "DETUNE", "WIDTH",
-    "THRESH", "RATIO", "ATTACK", "RELEASE", "KNEE", "MAKEUP", "LIMIT",
-    "LOW CUT", "BODY", "MID FREQ", "PRESENCE", "MID Q", "AIR", "HIGH CUT", "OUTPUT"
-};
-
-const std::array<const char*, 36> suffixes {
-    " dB", " dB", " ms", " ms", " ms",
-    " dB", " dB", " ms", " Hz",
-    " dB", " Hz", " dB", " ms",
-    " dB", " %", " %", " dB",
-    " %", " ms", " ct", " %",
-    " dB", ":1", " ms", " ms", " dB", " dB", " dB",
-    " Hz", " dB", " Hz", " dB", "", " dB", " Hz", " dB"
-};
-
-const std::array<const char*, 7> moduleIds {
-    "gateEnabled", "noiseEnabled", "deEsserEnabled", "satEnabled",
-    "doublerEnabled", "compEnabled", "eqEnabled"
-};
-
-struct ModuleLayout
+const juce::Colour black(17,18,19),panel(25,26,27),raised(40,41,42),silver(166,163,155),white(230,226,217),muted(145,144,139),red(236,48,43),green(54,213,94);
+const char* pages[]={"TUNE","CLEAN","DYNAMICS","TONE","SPACE","HARMONY","VOICE"};
+const char* pagePower[]={"tuneEnabled","cleanEnabled","compEnabled","eqEnabled","reverbEnabled","harmonyEnabled","voiceEnabled"};
+const char* noteIds[]={"noteC","noteCs","noteD","noteDs","noteE","noteF","noteFs","noteG","noteGs","noteA","noteAs","noteB"};
+const char* noteNames[]={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+void text(juce::Graphics& g,const juce::String& value,juce::Rectangle<float> r,float size=14,juce::Colour c=white,juce::Justification align=juce::Justification::centredLeft)
 {
-    const char* title;
-    int first, count, columns;
-    juce::Rectangle<int> bounds;
-};
-const std::array<ModuleLayout, 7> modules {{
-    { "GATE", 0, 5, 5, { 16, 300, 300, 176 } },
-    { "NOISE FILTER", 5, 4, 4, { 324, 300, 252, 176 } },
-    { "DE-ESSER", 9, 4, 4, { 584, 300, 252, 176 } },
-    { "SATURATION", 13, 4, 4, { 844, 300, 260, 176 } },
-    { "DOUBLER", 17, 4, 2, { 16, 488, 244, 248 } },
-    { "COMPRESSOR / LIMITER", 21, 7, 4, { 268, 488, 414, 248 } },
-    { "VOCAL EQ", 28, 7, 4, { 690, 488, 414, 248 } }
-}};
-const std::array<const char*, 36> hints {
-    "Level above which the gate opens.", "Attenuation while the gate is closed.",
-    "Time for the gate to open.", "Time to stay open after the signal falls below threshold.", "Time for the gate to close.",
-    "Level below which noise attenuation increases.", "Maximum noise attenuation (downward expansion, not spectral denoising).",
-    "Recovery time for the noise envelope.", "Removes low-frequency rumble.",
-    "Sibilance level at which attenuation starts.", "Frequency separating the sibilance band.",
-    "Maximum high-band reduction.", "Recovery time after sibilance.",
-    "Level driven into the saturation stage.", "Tilt the saturation towards dark or bright.",
-    "Blend saturated and clean signal.", "Output trim of the saturation stage.",
-    "Blend the delayed voice.", "Base delay of the doubled voice.", "Depth of delay modulation (nominal cents).", "Stereo width of the doubled voice.",
-    "Level above which compression begins.", "Compression ratio above threshold.", "Compressor attack time.",
-    "Compressor recovery time.", "Width of the soft transition around threshold.", "Gain after compression.",
-    "Advanced: final sample-peak ceiling after EQ/output. Legacy: soft clipping before EQ.",
-    "High-pass cutoff.", "Low shelf at 160 Hz.", "Centre frequency of the presence band.",
-    "Presence-band gain.", "Presence bandwidth: larger Q is narrower.", "High shelf at 10 kHz.", "Low-pass cutoff.",
-    "Final output trim. Remains active when EQ is bypassed."
-};
-
-bool inScale(int note, int key, int scale)
-{
-    static constexpr std::array<int, 7> major { 0, 2, 4, 5, 7, 9, 11 };
-    static constexpr std::array<int, 7> minor { 0, 2, 3, 5, 7, 8, 10 };
-    const int relative = (note - key + 12) % 12;
-    const auto& intervals = scale == 1 ? major : minor;
-    return scale == 0 || std::find(intervals.begin(), intervals.end(), relative) != intervals.end();
+    g.setColour(c);g.setFont(juce::FontOptions(size));g.drawText(value,r.toNearestInt(),align,true);
 }
-
-void text(juce::Graphics& g, const juce::String& value, juce::Rectangle<int> r,
-          float size, juce::Colour colour, int alignment = juce::Justification::centredLeft)
+void led(juce::Graphics& g,juce::Point<float> p,bool on)
 {
-    g.setColour(colour);
-    g.setFont(juce::FontOptions(size, juce::Font::bold));
-    g.drawText(value, r, alignment);
+    g.setColour((on?green:red).withAlpha(.13f));g.fillEllipse(p.x-7,p.y-7,14,14);
+    g.setColour(on?green:red.darker(.12f));g.fillEllipse(p.x-4,p.y-4,8,8);
+    g.setColour(juce::Colours::white.withAlpha(.45f));g.fillEllipse(p.x-2,p.y-2,2,2);
 }
-
-void meter(juce::Graphics& g, const juce::String& title, float db, bool clip, int y)
+float frequencyX(float hz,juce::Rectangle<float> r){return r.getX()+r.getWidth()*std::log(std::clamp(hz,20.f,20000.f)/20.f)/std::log(1000.f);}
+float xFrequency(float x,juce::Rectangle<float> r){return 20.f*std::pow(1000.f,juce::jlimit(0.f,1.f,(x-r.getX())/r.getWidth()));}
+float dbY(float value,juce::Rectangle<float> r,float low=-72,float high=0){return r.getBottom()-(value-low)/(high-low)*r.getHeight();}
+void grid(juce::Graphics& g,juce::Rectangle<float> r)
 {
-    text(g, title, { 735, y, 36, 20 }, 11.0f, muted);
-    const juce::Rectangle<float> track(775.0f, static_cast<float>(y + 5), 206.0f, 9.0f);
-    g.setColour(outer); g.fillRoundedRectangle(track, 3.0f);
-    g.setColour(clip ? red : green);
-    g.fillRoundedRectangle(track.withWidth(track.getWidth() * juce::jlimit(0.0f, 1.0f, (db + 60.0f) / 60.0f)), 3.0f);
-    text(g, db <= -59.9f ? "-inf" : juce::String(db, 1), { 983, y, 45, 20 }, 11.0f, clip ? red : cream,
-         juce::Justification::centredRight);
+    g.setColour(black);g.fillRoundedRectangle(r,4);
+    for(float hz:{20.f,50.f,100.f,200.f,500.f,1000.f,2000.f,5000.f,10000.f,20000.f})
+    {
+        const float x=frequencyX(hz,r);g.setColour(raised);g.drawVerticalLine(int(x),r.getY(),r.getBottom());
+        text(g,hz>=1000?juce::String(hz/1000,0)+"k":juce::String(hz,0),{x-19,r.getBottom()+3,38,18},11,muted,juce::Justification::centred);
+    }
+    for(int i=0;i<5;++i){g.setColour(raised);g.drawHorizontalLine(int(r.getY()+r.getHeight()*i/4),r.getX(),r.getRight());}
 }
-}
-
-JerzyAutoTuneAudioProcessorEditor::AnalogLookAndFeel::AnalogLookAndFeel()
-    : JerzyAudioUI::HardwareLookAndFeel(JerzyAudioUI::steel())
+std::vector<juce::String> originalsForPage(int page)
 {
-    setColour(juce::Label::textColourId, cream);
-    setColour(juce::ComboBox::backgroundColourId, outer);
-    setColour(juce::ComboBox::textColourId, cream);
-    setColour(juce::ComboBox::outlineColourId, face);
-    setColour(juce::PopupMenu::backgroundColourId, panel);
-    setColour(juce::PopupMenu::textColourId, cream);
-    setColour(juce::PopupMenu::highlightedBackgroundColourId, brass);
-    setColour(juce::PopupMenu::highlightedTextColourId, outer);
-    setColour(juce::TextButton::buttonColourId, outer);
-    setColour(juce::TextButton::buttonOnColourId, brass);
-    setColour(juce::TextButton::textColourOffId, cream);
-    setColour(juce::TextButton::textColourOnId, outer);
-}
-juce::Font JerzyAutoTuneAudioProcessorEditor::AnalogLookAndFeel::getLabelFont(juce::Label& l)
-{ return dynamic_cast<juce::Slider*>(l.getParentComponent()) != nullptr ? juce::Font(juce::FontOptions(11.0f)) : l.getFont(); }
-juce::Font JerzyAutoTuneAudioProcessorEditor::AnalogLookAndFeel::getComboBoxFont(juce::ComboBox&)
-{ return juce::FontOptions(13.0f); }
-juce::Font JerzyAutoTuneAudioProcessorEditor::AnalogLookAndFeel::getTextButtonFont(juce::TextButton&, int)
-{ return juce::FontOptions(12.0f, juce::Font::bold); }
-
-JerzyAutoTuneAudioProcessorEditor::JerzyAutoTuneAudioProcessorEditor(JerzyAutoTuneAudioProcessor& p)
-    : AudioProcessorEditor(&p), processor(p)
-{
-    const int savedWidth = processor.editorWidth.load();
-    const int savedHeight = processor.editorHeight.load();
-    setLookAndFeel(&analogLookAndFeel);
-    setOpaque(true);
-    addAndMakeVisible(surface);
-    surface.setSize(designWidth, designHeight);
-    for (int i = 0; i < noteNames.size(); ++i) keyBox.addItem(noteNames[i], i + 1);
-    scaleBox.addItemList({ "Chromatic", "Major", "Minor" }, 1);
-    for (auto* c : { &keyBox, &scaleBox, &zoomBox }) surface.addAndMakeVisible(c);
-    keyBox.setComponentID("key"); scaleBox.setComponentID("scale"); zoomBox.setComponentID("uiZoom");
-    keyBox.setTooltip("Root note of the selected scale.");
-    scaleBox.setTooltip("Allowed notes are the intersection of this scale and NOTE FILTER.");
-    zoomBox.setTooltip("Resize the entire vector interface. You can also drag the lower-right corner.");
-    for (const int percent : { 75, 90, 100, 125, 150 }) zoomBox.addItem(juce::String(percent) + "%", percent);
-    zoomBox.onChange = [this] {
-        const int percent = zoomBox.getSelectedId();
-        if (percent > 0) setSize(designWidth * percent / 100, designHeight * percent / 100);
+    std::vector<juce::String> result;
+    const char* lists[]={
+        "key scale noteC noteCs noteD noteDs noteE noteF noteFs noteG noteGs noteA noteAs noteB speed amount engineMode vibratoPreserve noteStability referenceHz formantEnabled formantShift transpose",
+        "gateEnabled gateThreshold gateRange gateAttack gateHold gateRelease noiseEnabled noiseThreshold noiseReduction noiseRelease noiseHighPass deEsserEnabled deEsserThreshold deEsserFreq deEsserAmount deEsserRelease",
+        "compEnabled compThreshold compRatio compAttack compRelease compKnee compMakeup",
+        "eqEnabled eqLowCut eqLow eqMidFreq eqMid eqMidQ eqHigh eqHighCut satEnabled satDrive satTone satMix satOutput doublerEnabled doublerAmount doublerDelay doublerDetune doublerWidth",
+        "","","formantEnabled formantShift transpose"
     };
-    configureLabel(keyLabel, "KEY"); configureLabel(scaleLabel, "SCALE");
-    configureLabel(speedLabel, "SPEED"); configureLabel(amountLabel, "AMOUNT"); configureLabel(mixLabel, "PITCH MIX");
-    configureLabel(noteStatus, {});
-    noteStatus.setJustificationType(juce::Justification::centredLeft);
-    configureSlider(speedSlider, "speed", "Correction response time. Lower values give faster pitch transitions.");
-    configureSlider(amountSlider, "amount", "How far the voice is moved towards a permitted note.");
-    configureSlider(mixSlider, "mix", "Pitch-corrected / latency-aligned dry blend. The vocal chain still processes both.");
-    for (size_t i = 0; i < noteButtons.size(); ++i)
-    {
-        auto& b = noteButtons[i];
-        b.setButtonText(noteNames[static_cast<int>(i)]);
-        b.setComponentID(noteParameterIds[i]);
-        b.setClickingTogglesState(true);
-        b.onClick = [this] { updateControlStates(); };
-        surface.addAndMakeVisible(b);
-    }
-    for (auto* b : { &allNotes, &noNotes }) surface.addAndMakeVisible(b);
-    allNotes.setComponentID("allNotes"); noNotes.setComponentID("noNotes");
-    allNotes.setTooltip("Enable all 12 note switches; the scale still applies.");
-    noNotes.setTooltip("Disable pitch correction by clearing the note mask. Vocal effects remain active.");
-    allNotes.onClick = [this] { setAllNotes(true); };
-    noNotes.onClick = [this] { setAllNotes(false); };
-    for (size_t i = 0; i < vocalControlCount; ++i)
-    {
-        configureSlider(vocalSliders[i], controlIds[i], hints[i]);
-        configureLabel(vocalLabels[i], controlLabels[i]);
-    }
-    for (size_t i = 0; i < moduleButtons.size(); ++i)
-    {
-        auto& b = moduleButtons[i];
-        b.setClickingTogglesState(true);
-        b.setComponentID(moduleIds[i]);
-        b.setTooltip(juce::String("Enable / bypass ") + modules[i].title);
-        b.onClick = [this] { updateControlStates(); };
-        surface.addAndMakeVisible(b);
-    }
-    auto& state = processor.parameters;
-    keyAttachment = std::make_unique<ComboAttachment>(state, "key", keyBox);
-    scaleAttachment = std::make_unique<ComboAttachment>(state, "scale", scaleBox);
-    speedAttachment = std::make_unique<SliderAttachment>(state, "speed", speedSlider);
-    amountAttachment = std::make_unique<SliderAttachment>(state, "amount", amountSlider);
-    mixAttachment = std::make_unique<SliderAttachment>(state, "mix", mixSlider);
-    for (size_t i = 0; i < noteAttachments.size(); ++i)
-        noteAttachments[i] = std::make_unique<ButtonAttachment>(state, noteParameterIds[i], noteButtons[i]);
-    for (size_t i = 0; i < vocalControlCount; ++i)
-        vocalSliderAttachments[i] = std::make_unique<SliderAttachment>(state, controlIds[i], vocalSliders[i]);
-    for (size_t i = 0; i < moduleButtons.size(); ++i)
-        moduleButtonAttachments[i] = std::make_unique<ButtonAttachment>(state, moduleIds[i], moduleButtons[i]);
-
-    // Attachments provide parameter conversion; append units afterwards and keep editable numeric values.
-    const auto format = [](juce::Slider& s, const juce::String& suffix, int places) {
-        s.textFromValueFunction = [suffix, places](double v) { return juce::String(v, places) + suffix; };
-        s.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
-        s.updateText();
+    const auto tokens=juce::StringArray::fromTokens(lists[page]," ","");for(const auto& id:tokens)result.push_back(id);return result;
+}
+std::vector<juce::String> primaryForPage(int page)
+{
+    const char* lists[]={
+        "tuneEnabled speed amount vibratoPreserve formantShift engineMode key scale referenceHz transpose noteStability formantEnabled",
+        "cleanEnabled cleanReduction cleanSmooth cleanMix cleanAudition gateEnabled gateThreshold deEsserEnabled deEsserAmount deEsserHard noiseEnabled noiseReduction",
+        "compEnabled compStyle compThreshold compRatio compAttack compRelease comp2Enabled comp2Style comp2Threshold comp2Ratio comp2Attack comp2Release",
+        "eqEnabled eqMidFreq eqMid eqMidQ eqLowCut eqHighCut eqLow eqHigh satEnabled satDrive satMix satModel",
+        "reverbEnabled reverbType reverbDecay reverbPreDelay reverbDamping reverbWidth reverbMix spaceDucking delayEnabled delayDivision delayFeedback delayMix",
+        "harmonyEnabled harmonyMode harmonyMix harmonyHumanize",
+        "voiceEnabled formantShift transpose voiceAir voiceColour voiceCharacter voiceMix formantEnabled"
     };
-    format(speedSlider, " ms", 1); format(amountSlider, " %", 1); format(mixSlider, " %", 1);
-    for (size_t i = 0; i < vocalControlCount; ++i)
+    std::vector<juce::String> result;for(const auto& id:juce::StringArray::fromTokens(lists[page]," ",""))result.push_back(id);return result;
+}
+}
+
+JerzyAutoTuneAudioProcessorEditor::StudioLookAndFeel::StudioLookAndFeel()
+{
+    setColour(juce::ComboBox::backgroundColourId,black);setColour(juce::ComboBox::textColourId,white);setColour(juce::ComboBox::outlineColourId,silver.withAlpha(.4f));
+    setColour(juce::PopupMenu::backgroundColourId,panel);setColour(juce::PopupMenu::textColourId,white);setColour(juce::PopupMenu::highlightedBackgroundColourId,raised);
+    setColour(juce::Slider::textBoxTextColourId,white);setColour(juce::Slider::textBoxBackgroundColourId,black);setColour(juce::Slider::textBoxOutlineColourId,raised);
+    setColour(juce::Label::textColourId,white);setColour(juce::TextButton::textColourOffId,white);setColour(juce::TextButton::textColourOnId,white);
+}
+juce::Font JerzyAutoTuneAudioProcessorEditor::StudioLookAndFeel::getTextButtonFont(juce::TextButton&,int){return juce::FontOptions(13.f);}
+juce::Font JerzyAutoTuneAudioProcessorEditor::StudioLookAndFeel::getComboBoxFont(juce::ComboBox&){return juce::FontOptions(14.f);}
+juce::Font JerzyAutoTuneAudioProcessorEditor::StudioLookAndFeel::getLabelFont(juce::Label& l){return l.getFont();}
+void JerzyAutoTuneAudioProcessorEditor::StudioLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& b,const juce::Colour&,bool over,bool down)
+{
+    const auto r=b.getLocalBounds().toFloat().reduced(1);g.setColour(b.getToggleState()?raised:panel);g.fillRoundedRectangle(r,4);
+    g.setColour((over||b.getToggleState()?silver:silver.withAlpha(.3f)));g.drawRoundedRectangle(r,4,down?2.f:1.f);
+    if(b.getProperties().contains("moduleState"))led(g,{10,r.getCentreY()},bool(b.getProperties()["moduleState"]));
+    if(b.getComponentID()=="resetOver"&&b.getToggleState()){g.setColour(red);g.drawRoundedRectangle(r,4,2);}
+}
+void JerzyAutoTuneAudioProcessorEditor::StudioLookAndFeel::drawToggleButton(juce::Graphics& g,juce::ToggleButton& b,bool over,bool)
+{
+    const auto r=b.getLocalBounds().toFloat().reduced(1);g.setColour(over?raised:black);g.fillRoundedRectangle(r,3);
+    g.setColour(silver.withAlpha(.4f));g.drawRoundedRectangle(r,3,1);
+    const bool on=b.getToggleState();led(g,{r.getX()+12,r.getCentreY()},on);
+    const auto label=b.getComponentID().startsWith("note")&&b.getButtonText().length()<=2?b.getButtonText():(b.getComponentID()=="masterEnabled"?"MASTER ":juce::String())+(on?"ON":"OFF");
+    text(g,label,r.withTrimmedLeft(24),13,white,juce::Justification::centred);
+}
+void JerzyAutoTuneAudioProcessorEditor::StudioLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int w,int h,float value,float start,float end,juce::Slider& slider)
+{
+    const float diameter=juce::jmax(16.f,float(juce::jmin(w,h))-12.f),radius=diameter*.5f;
+    const juce::Point<float> c(float(x)+w*.5f,float(y)+h*.5f);
+    g.setColour(juce::Colours::black.withAlpha(.6f));g.fillEllipse(c.x-radius+2,c.y-radius+3,diameter,diameter);
+    g.setColour(silver.darker(.35f));g.fillEllipse(c.x-radius,c.y-radius,diameter,diameter);
+    g.setColour(black);g.fillEllipse(c.x-radius+3,c.y-radius+3,diameter-6,diameter-6);
+    g.setColour(raised);g.drawEllipse(c.x-radius+5,c.y-radius+5,diameter-10,diameter-10,1);
+    const float angle=start+value*(end-start);
+    g.setColour(white);g.drawLine(c.x+std::sin(angle)*radius*.42f,c.y-std::cos(angle)*radius*.42f,c.x+std::sin(angle)*radius*.78f,c.y-std::cos(angle)*radius*.78f,2.5f);
+    juce::Path arc;arc.addCentredArc(c.x,c.y,radius+3,radius+3,0,start,end,true);g.setColour(silver.withAlpha(.7f));g.strokePath(arc,juce::PathStrokeType(1.2f));
+    if(slider.getMinimum()<=0&&slider.getMaximum()>=0)
     {
-        const auto interval = vocalSliders[i].getInterval();
-        format(vocalSliders[i], suffixes[i], interval >= 1.0 ? 0 : (interval < 0.1 ? 2 : 1));
+        const float zero=float(slider.valueToProportionOfLength(0));const float z=start+zero*(end-start);
+        g.setColour(red);g.drawLine(c.x+std::sin(z)*(radius+1),c.y-std::cos(z)*(radius+1),c.x+std::sin(z)*(radius+8),c.y-std::cos(z)*(radius+8),2);
     }
-    keyBox.onChange = [this] { updateControlStates(); };
-    scaleBox.onChange = [this] { updateControlStates(); };
-    engineBox.setComponentID("engineMode"); engineBox.addItemList({"Legacy 1.5", "Advanced"},1);
-    engineBox.setTooltip("Legacy recalls the original engine; Advanced enables tracking, expression, formants and final limiting.");
-    surface.addAndMakeVisible(engineBox);
-    engineAttachment=std::make_unique<ComboAttachment>(processor.parameters,"engineMode",engineBox);
-    formantButton.setComponentID("formantEnabled"); limiterButton.setComponentID("limiterEnabled");
-    surface.addAndMakeVisible(formantButton); surface.addAndMakeVisible(limiterButton);
-    formantButton.setTooltip("Keep the vocal spectral envelope independent of pitch correction; Formant Shift changes its position.");
-    limiterButton.setTooltip("Stereo-linked 3 ms lookahead sample-peak limiter after output trim. Not a true-peak limiter.");
-    advancedButtons[0]=std::make_unique<ButtonAttachment>(processor.parameters,"formantEnabled",formantButton);
-    advancedButtons[1]=std::make_unique<ButtonAttachment>(processor.parameters,"limiterEnabled",limiterButton);
-    const char* ids[]={"vibratoPreserve","noteStability","referenceHz","formantShift","transpose"};
-    const char* names[]={"VIBRATO","STABILITY","REFERENCE A4","FORMANT SHIFT","TRANSPOSE"};
-    const char* tips[]={"Preserve pitch movement around the slowly tracked note centre. Zero gives full instantaneous correction.",
-        "Hysteresis when selecting a new target note; reduces chatter at scale boundaries.","Tuning reference for A4.",
-        "Independent spectral-envelope shift in semitones.","Additional pitch transposition in semitones."};
-    const char* units[]={" %"," %"," Hz"," st"," st"};
-    for(size_t i=0;i<advancedSliders.size();++i)
+}
+struct JerzyAutoTuneAudioProcessorEditor::ParameterControl final : juce::Component
+{
+    JerzyAutoTuneAudioProcessor& processor;juce::String id;juce::Label name;juce::Slider slider;juce::ComboBox choice;juce::ToggleButton toggle;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sa;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> ca;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> ba;
+    bool isNote=false,inspector=false;
+    ParameterControl(JerzyAutoTuneAudioProcessor& p,const juce::String& parameterId):processor(p),id(parameterId)
     {
-        configureSlider(advancedSliders[i],ids[i],tips[i]);
-        advancedSliders[i].setTextValueSuffix(units[i]);
-        configureLabel(advancedLabels[i],names[i]);
-        advancedAttachments[i]=std::make_unique<SliderAttachment>(processor.parameters,ids[i],advancedSliders[i]);
-    }
-    layoutControls();
-    updateControlStates();
-    setResizable(true, true);
-    setResizeLimits(840, 720, 1680, 1440);
-    getConstrainer()->setFixedAspectRatio(static_cast<double>(designWidth) / designHeight);
-    setSize(savedWidth, savedHeight);
-    startTimerHz(30);
-}
-
-JerzyAutoTuneAudioProcessorEditor::~JerzyAutoTuneAudioProcessorEditor()
-{
-    stopTimer();
-    setLookAndFeel(nullptr);
-}
-
-void JerzyAutoTuneAudioProcessorEditor::configureSlider(juce::Slider& slider, const juce::String& id,
-                                                       const juce::String& hint)
-{
-    slider.setComponentID(id);
-    slider.setName(processor.parameters.getParameter(id)->getName(80));
-    slider.setTooltip(hint + " Double-click: default. Shift-drag: fine adjustment. Click value: type a number.");
-    slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 72, 21);
-    slider.setColour(juce::Slider::textBoxTextColourId, cream);
-    slider.setColour(juce::Slider::textBoxBackgroundColourId, outer);
-    slider.setColour(juce::Slider::textBoxOutlineColourId, face);
-    slider.setScrollWheelEnabled(false);
-    slider.setMouseDragSensitivity(180);
-    const auto* p = processor.parameters.getParameter(id);
-    slider.setDoubleClickReturnValue(true, p->convertFrom0to1(p->getDefaultValue()));
-    surface.addAndMakeVisible(slider);
-}
-
-void JerzyAutoTuneAudioProcessorEditor::configureLabel(juce::Label& label, const juce::String& value)
-{
-    label.setText(value, juce::dontSendNotification);
-    label.setJustificationType(juce::Justification::centred);
-    label.setFont(juce::FontOptions(11.5f, juce::Font::bold));
-    label.setBorderSize(juce::BorderSize<int>(0));
-    surface.addAndMakeVisible(label);
-}
-
-void JerzyAutoTuneAudioProcessorEditor::layoutControls()
-{
-    zoomBox.setBounds(998, 22, 90, 28);
-    engineBox.setBounds(32, 815, 210, 29);
-    formantButton.setBounds(32, 854, 210, 25);
-    limiterButton.setBounds(32, 888, 210, 25);
-    for(size_t i=0;i<advancedSliders.size();++i)
-    {
-        const int x=275+static_cast<int>(i)*162;
-        advancedSliders[i].setBounds(x,802,146,106);
-        advancedLabels[i].setBounds(x,910,146,19);
-    }
-    keyLabel.setBounds(32, 121, 62, 18); keyBox.setBounds(32, 142, 82, 29);
-    scaleLabel.setBounds(128, 121, 96, 18); scaleBox.setBounds(128, 142, 146, 29);
-    allNotes.setBounds(280, 142, 48, 29); noNotes.setBounds(332, 142, 48, 29);
-    for (size_t i = 0; i < noteButtons.size(); ++i)
-        noteButtons[i].setBounds(32 + static_cast<int>(i) * 29, 193, 26, 32);
-    noteStatus.setBounds(32, 235, 350, 18);
-    speedSlider.setBounds(404, 126, 90, 111); speedLabel.setBounds(404, 239, 90, 18);
-    amountSlider.setBounds(508, 126, 90, 111); amountLabel.setBounds(508, 239, 90, 18);
-    mixSlider.setBounds(612, 126, 90, 111); mixLabel.setBounds(612, 239, 90, 18);
-    vocalSliders[35].setBounds(1036, 139, 60, 93); vocalLabels[35].setBounds(1030, 236, 72, 18);
-    for (size_t m = 0; m < modules.size(); ++m)
-    {
-        const auto& module = modules[m];
-        const auto r = module.bounds;
-        moduleButtons[m].setBounds(r.getRight() - 59, r.getY() + 7, 49, 23);
-        const int rows = (module.count + module.columns - 1) / module.columns;
-        const int cellWidth = (r.getWidth() - 12) / module.columns;
-        const int cellHeight = (r.getHeight() - 42) / rows;
-        for (int j = 0; j < module.count; ++j)
+        auto* parameter=processor.parameters.getParameter(id);jassert(parameter!=nullptr);
+        name.setText(parameter->getName(40),juce::dontSendNotification);name.setJustificationType(juce::Justification::centred);name.setFont(juce::FontOptions(12.5f));name.setBorderSize({});addAndMakeVisible(name);
+        if(auto* c=dynamic_cast<juce::AudioParameterChoice*>(parameter))
         {
-            const size_t index = static_cast<size_t>(module.first + j);
-            const int x = r.getX() + 6 + (j % module.columns) * cellWidth;
-            const int y = r.getY() + 38 + (j / module.columns) * cellHeight;
-            vocalLabels[index].setBounds(x, y, cellWidth, 17);
-            vocalSliders[index].setBounds(x + 2, y + 18, cellWidth - 4, cellHeight - 22);
-            vocalSliders[index].setTextBoxStyle(juce::Slider::TextBoxBelow, false, cellWidth - 6, 21);
+            choice.addItemList(c->choices,1);choice.setComponentID(id);choice.setTooltip(parameter->getName(100));addAndMakeVisible(choice);ca=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(processor.parameters,id,choice);
+        }
+        else if(dynamic_cast<juce::AudioParameterBool*>(parameter))
+        {
+            isNote=id.startsWith("note")&&parameter->getName(10).length()<=2;
+            toggle.setButtonText(isNote?parameter->getName(10):"ON");toggle.setComponentID(id);toggle.setTooltip(parameter->getName(100));addAndMakeVisible(toggle);ba=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(processor.parameters,id,toggle);
+        }
+        else
+        {
+            slider.setComponentID(id);slider.setName(parameter->getName(100));slider.setTooltip(parameter->getName(100)+". Double-click: default. Shift-drag: fine adjustment. Red tick: zero reference.");
+            slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,100,22);slider.setScrollWheelEnabled(false);slider.setMouseDragSensitivity(200);
+            slider.setDoubleClickReturnValue(true,parameter->convertFrom0to1(parameter->getDefaultValue()));slider.setTextValueSuffix(" "+parameter->getLabel());
+            slider.onDragStart=[this]{processor.undoManager.beginNewTransaction("Adjust "+id);};
+            addAndMakeVisible(slider);sa=std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.parameters,id,slider);
         }
     }
-}
+    void resized() override
+    {
+        auto r=getLocalBounds();if(isNote||id=="masterEnabled"){name.setVisible(false);toggle.setBounds(r);return;}
+        name.setBounds(r.removeFromTop(19));r.reduce(4,0);
+        if(ca)choice.setBounds(r.withHeight(32).withY(r.getY()+8));
+        else if(ba)toggle.setBounds(r.withHeight(32).withY(r.getY()+8));
+        else {slider.setBounds(r);slider.setTextBoxStyle(inspector?juce::Slider::TextBoxRight:juce::Slider::TextBoxBelow,false,inspector?80:juce::jmax(44,r.getWidth()-4),22);}
+    }
+};
 
+JerzyAutoTuneAudioProcessorEditor::JerzyAutoTuneAudioProcessorEditor(JerzyAutoTuneAudioProcessor& p):AudioProcessorEditor(&p),processor(p)
+{
+    const int savedWidth=processor.editorWidth.load(),savedHeight=processor.editorHeight.load();
+    setLookAndFeel(&look);setOpaque(true);addAndMakeVisible(surface);surface.setSize(1280,800);
+    steel=juce::ImageCache::getFromMemory(BinaryData::steel_texture_png,BinaryData::steel_texture_pngSize);
+    for(int i=0;i<7;++i)
+    {
+        auto& button=navigation[size_t(i)];button.setButtonText(pages[i]);button.setComponentID("page"+juce::String(i));button.setTooltip("Open "+juce::String(pages[i]));button.onClick=[this,i]{showPage(i,false);};surface.addAndMakeVisible(button);
+    }
+    presets.addItemList({"Natural Lead","Tight Rap","Soft Dialogue","Wide Chorus","Telephone","Airy Plate"},1);presets.setSelectedId(1,juce::dontSendNotification);presets.setComponentID("factoryPreset");
+    presets.onChange=[this]{processor.applyFactoryPreset(presets.getSelectedId()-1);};surface.addAndMakeVisible(presets);
+    for(int percent:{75,90,100,125,150})zoom.addItem(juce::String(percent)+"%",percent);
+    zoom.setComponentID("uiZoom");zoom.onChange=[this]{const int n=zoom.getSelectedId();if(n>0)setSize(1280*n/100,800*n/100);};surface.addAndMakeVisible(zoom);
+    compare.setComponentID("compareAB");compareState=processor.parameters.copyState();compare.onClick=[this]{auto current=processor.parameters.copyState();processor.parameters.replaceState(compareState);compareState=current;compare.setToggleState(!compare.getToggleState(),juce::dontSendNotification);};
+    undo.setComponentID("undo");undo.onClick=[this]{processor.undoManager.undo();};
+    advancedButton.setComponentID("allControls");advancedButton.onClick=[this]{showPage(page,!expanded);};
+    learnNoise.setComponentID("learnNoise");learnNoise.onClick=[this]{processor.learnNoise();};
+    learnKey.setComponentID("learnKey");learnKey.onClick=[this]{processor.learnKey();};
+    applyKey.setComponentID("applyKey");applyKey.onClick=[this]{processor.applySuggestedKey();};
+    resetPeak.setComponentID("resetOver");resetPeak.onClick=[this]{processor.resetOverload();};
+    allNotes.setComponentID("allNotes");allNotes.onClick=[this]{for(auto* id:noteIds)setReal(id,1);};
+    noNotes.setComponentID("noNotes");noNotes.onClick=[this]{for(auto* id:noteIds)setReal(id,0);};
+    for(auto* button:{&compare,&undo,&advancedButton,&learnNoise,&learnKey,&applyKey,&resetPeak,&allNotes,&noNotes})surface.addAndMakeVisible(button);
+    for(auto* id:{"masterEnabled","outputGain","limiterCeiling","limiterEnabled","mix"}){auto* c=master.add(new ParameterControl(processor,id));surface.addAndMakeVisible(c);}
+    spectrum.fill(-90);processedSpectrum.fill(-90);pitchHistory.fill(-1);targetHistory.fill(-1);reductionHistory.fill(0);stageBHistory.fill(0);
+    showPage(0,false);setResizable(true,true);setResizeLimits(960,600,1920,1200);
+    setSize(savedWidth,savedHeight);startTimerHz(30);
+}
+JerzyAutoTuneAudioProcessorEditor::~JerzyAutoTuneAudioProcessorEditor(){stopTimer();parameters.clear();master.clear();setLookAndFeel(nullptr);}
+void JerzyAutoTuneAudioProcessorEditor::paint(juce::Graphics& g){g.fillAll(black);}
 void JerzyAutoTuneAudioProcessorEditor::resized()
 {
-    const float scale = juce::jmin(static_cast<float>(getWidth()) / designWidth,
-                                  static_cast<float>(getHeight()) / designHeight);
-    const float x = (getWidth() - designWidth * scale) * 0.5f;
-    const float y = (getHeight() - designHeight * scale) * 0.5f;
-    // One transform scales paint, fonts, text editors and hit targets together.
-    surface.setTransform(juce::AffineTransform::scale(scale).translated(x, y));
-    const int percent = juce::roundToInt(scale * 100.0f);
-    zoomBox.setSelectedId(0, juce::dontSendNotification);
-    zoomBox.setText(juce::String(percent) + "%", juce::dontSendNotification);
-    if (getWidth() >= 840 && getHeight() >= 720)
-    {
-        processor.editorWidth.store(getWidth()); processor.editorHeight.store(getHeight());
-    }
+    const float scale=juce::jmin(getWidth()/1280.f,getHeight()/800.f);
+    surface.setTransform(juce::AffineTransform::scale(scale).translated((getWidth()-1280*scale)*.5f,(getHeight()-800*scale)*.5f));
+    zoom.setSelectedId(0,juce::dontSendNotification);zoom.setText(juce::String(juce::roundToInt(scale*100))+"%",juce::dontSendNotification);
+    if(getWidth()>=960&&getHeight()>=600){processor.editorWidth.store(getWidth());processor.editorHeight.store(getHeight());}
 }
-
-void JerzyAutoTuneAudioProcessorEditor::setAllNotes(bool enabled)
+void JerzyAutoTuneAudioProcessorEditor::showPage(int index,bool allControls)
 {
-    for (const auto* id : noteParameterIds)
-    {
-        auto* p = processor.parameters.getParameter(id);
-        p->beginChangeGesture(); p->setValueNotifyingHost(enabled ? 1.0f : 0.0f); p->endChangeGesture();
-    }
-    updateControlStates();
+    page=juce::jlimit(0,6,index);expanded=allControls;parameters.clear();
+    auto ids=expanded?originalsForPage(page):primaryForPage(page);
+    if(expanded||page==5)for(const auto& spec:jerzy::studio::parameterSpecs())if(spec.page==page&&std::find(ids.begin(),ids.end(),spec.id)==ids.end())ids.push_back(spec.id);
+    if(page==0)for(auto* id:noteIds)if(std::find(ids.begin(),ids.end(),id)==ids.end())ids.push_back(id);
+    for(const auto& id:ids){auto* c=parameters.add(new ParameterControl(processor,id));surface.addAndMakeVisible(c);}
+    for(int i=0;i<7;++i)navigation[size_t(i)].setToggleState(i==page,juce::dontSendNotification);
+    advancedButton.setButtonText(expanded?"FOCUS VIEW":"ALL CONTROLS");advancedButton.setToggleState(expanded,juce::dontSendNotification);
+    layoutControls();timerCallback();surface.repaint();
 }
-
-void JerzyAutoTuneAudioProcessorEditor::updateControlStates()
+JerzyAutoTuneAudioProcessorEditor::ParameterControl* JerzyAutoTuneAudioProcessorEditor::control(const juce::String& id) const
 {
-    const int key = static_cast<int>(processor.parameters.getRawParameterValue("key")->load());
-    const int scale = static_cast<int>(processor.parameters.getRawParameterValue("scale")->load());
-    int active = 0;
-    for (size_t i = 0; i < noteButtons.size(); ++i)
+    for(auto* c:parameters)if(c->id==id)return c;for(auto* c:master)if(c->id==id)return c;return nullptr;
+}
+void JerzyAutoTuneAudioProcessorEditor::layoutControls()
+{
+    for(int i=0;i<7;++i)navigation[size_t(i)].setBounds(15,126+i*86,100,72);
+    presets.setBounds(360,18,205,32);compare.setBounds(578,18,60,32);undo.setBounds(649,18,66,32);zoom.setBounds(1040,18,83,32);
+    advancedButton.setBounds(969,88,180,30);learnNoise.setVisible(page==1);learnNoise.setBounds(145,126,150,30);
+    learnKey.setVisible(page==0);learnKey.setBounds(145,126,142,30);applyKey.setVisible(page==0);applyKey.setBounds(297,126,128,30);
+    allNotes.setVisible(page==0&&!expanded);noNotes.setVisible(page==0&&!expanded);allNotes.setBounds(775,690,95,35);noNotes.setBounds(880,690,105,35);
+    resetPeak.setBounds(1168,89,96,32);
+    control("masterEnabled")->setBounds(1158,9,112,65);control("outputGain")->setBounds(1167,455,100,113);control("limiterCeiling")->setBounds(1167,575,100,110);control("limiterEnabled")->setBounds(1167,696,100,65);control("mix")->setBounds(1038,656,110,105);
+    control("mix")->setVisible(page==0);
+    if(expanded)
     {
-        const bool member = inScale(static_cast<int>(i), key, scale);
-        const bool selected = processor.parameters.getRawParameterValue(noteParameterIds[i])->load() >= 0.5f;
-        if (member && selected) ++active;
-        noteButtons[i].setColour(juce::TextButton::buttonOnColourId, member ? brass : face);
-        noteButtons[i].setColour(juce::TextButton::textColourOnId, member ? outer : muted);
-        noteButtons[i].setTooltip(noteNames[static_cast<int>(i)] + (member ? ": in the selected scale." : ": outside this scale; switch is remembered."));
+        const int count=parameters.size();const int columns=8,rows=(count+columns-1)/columns;
+        const int height=juce::jmin(102,344/juce::jmax(1,rows));
+        for(int i=0;i<count;++i)parameters[i]->setBounds(139+(i%columns)*126,402+(i/columns)*height,121,height-2);
+        control("mix")->setBounds(993,185,152,130);return;
     }
-    noteStatus.setText(active == 0 ? "No target notes - pitch correction bypassed" :
-                       juce::String(active) + " active notes  /  gold = allowed by scale", juce::dontSendNotification);
-    noteStatus.setColour(juce::Label::textColourId, active == 0 ? red : muted);
-    for (size_t m = 0; m < modules.size(); ++m)
+    if(page==5)
     {
-        const bool on = processor.parameters.getRawParameterValue(moduleIds[m])->load() >= 0.5f;
-        moduleButtons[m].setButtonText(on ? "ON" : "BYP");
-        for (int j = 0; j < modules[m].count; ++j)
+        const auto place=[this](const juce::String& id,int x,int y,int w,int h){if(auto* c=control(id))c->setBounds(x,y,w,h);};
+        for(int i=0;i<4;++i)place(juce::StringArray{"harmonyEnabled","harmonyMode","harmonyMix","harmonyHumanize"}[i],142+i*245,140,225,95);
+        const char* suffix[]={"Enabled","Interval","Level","Pan","Formant"};
+        for(int v=0;v<4;++v)for(int k=0;k<5;++k)place("harmony"+juce::String(v+1)+suffix[k],260+k*172,247+v*90,160,86);
+        int i=0;for(auto* id:{"choirEnabled","choirVoices","choirPitch","choirTiming","choirVibrato","choirWidth","choirMix"})place(id,140+(i++)*139,649,132,90);
+        control("mix")->setBounds(1038,738,110,56);return;
+    }
+    auto ids=primaryForPage(page);
+    if(page==2)
+    {
+        for(int stage=0;stage<2;++stage)for(int i=0;i<6;++i)
+            if(auto* c=control(ids[size_t(stage*6+i)]))c->setBounds(143+stage*510+(i%3)*166,460+(i/3)*125,158,115);
+    }
+    else
+    {
+        int bottom=0;
+        for(size_t i=0;i<ids.size();++i)
         {
-            const size_t i = static_cast<size_t>(modules[m].first + j);
-            // Remain editable while bypassed so settings can be prepared before enabling.
-            vocalSliders[i].setAlpha(on ? 1.0f : 0.48f);
-            vocalLabels[i].setAlpha(on ? 1.0f : 0.48f);
+            auto* c=control(ids[i]);if(!c)continue;
+            const bool inspector=page==0?(ids[i]=="speed"||ids[i]=="amount"||ids[i]=="vibratoPreserve"||ids[i]=="formantShift"):i<4;
+            if(inspector)
+            {
+                int row=page==0?(ids[i]=="speed"?0:ids[i]=="amount"?1:ids[i]=="vibratoPreserve"?2:3):int(i);
+                c->inspector=true;c->setBounds(973,160+row*94,174,90);
+            }
+            else c->setBounds(142+(bottom%8)*126,550+(bottom/8)*100,121,94),++bottom;
         }
     }
-    const bool advanced=processor.parameters.getRawParameterValue("engineMode")->load()>=.5f;
-    for(auto& control : advancedSliders) control.setAlpha(advanced ? 1.f : .45f);
-    formantButton.setAlpha(advanced ? 1.f : .45f); limiterButton.setAlpha(advanced ? 1.f : .45f);
-    if(advanced && processor.parameters.getRawParameterValue("limiterEnabled")->load()>=.5f)
+    if(page==0)
     {
-        vocalSliders[27].setAlpha(1.f); vocalLabels[27].setAlpha(1.f);
+        for(int i=0;i<12;++i)if(auto* c=control(noteIds[i]))c->setBounds(142+i*51,686,47,46);
     }
-    surface.repaint();
 }
-
-void JerzyAutoTuneAudioProcessorEditor::paint(juce::Graphics& g) { g.fillAll(outer); }
-
+juce::Rectangle<float> JerzyAutoTuneAudioProcessorEditor::plotBounds() const
+{
+    if(expanded)return {150,166,815,195};
+    if(page==2)return {150,166,990,248};
+    return {150,166,799,335};
+}
+void JerzyAutoTuneAudioProcessorEditor::drawSpectrum(juce::Graphics& g,juce::Rectangle<float> r,bool showOutput)
+{
+    grid(g,r);const float fs=processor.graphRate.load();
+    for(int pass=0;pass<(showOutput?2:1);++pass)
+    {
+        juce::Path path;bool first=true;
+        for(int x=0;x<int(r.getWidth());++x)
+        {
+            const float hz=xFrequency(r.getX()+float(x),r);const int bin=juce::jlimit(1,1024,int(hz*2048/fs));
+            const float y=juce::jlimit(r.getY(),r.getBottom(),dbY(pass==0?spectrum[size_t(bin)]:processedSpectrum[size_t(bin)],r));
+            if(first){path.startNewSubPath(r.getX()+float(x),r.getBottom());path.lineTo(r.getX()+float(x),y);first=false;}else path.lineTo(r.getX()+float(x),y);
+        }
+        auto fill=path;fill.lineTo(r.getRight(),r.getBottom());fill.closeSubPath();g.setColour((pass==0?silver:white).withAlpha(pass==0?.15f:.06f));g.fillPath(fill);
+        g.setColour(pass==0?silver:white);g.strokePath(path,juce::PathStrokeType(pass==0?1.f:1.6f));
+    }
+}
 void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
 {
-    JerzyAudioUI::paintChassis(g, surface.getLocalBounds().toFloat(), JerzyAudioUI::steel());
-    g.setColour(brass); g.fillRect(16, 16, 4, 47);
-    text(g, "JERZY AUTO TUNE", { 32, 16, 430, 34 }, 27.0f, cream);
-    text(g, "ADVANCED VOCAL PROCESSOR", { 33, 50, 440, 18 }, 11.0f, muted);
-    text(g, "2.0", { 850, 25, 55, 24 }, 14.0f, brass, juce::Justification::centredRight);
-    text(g, "UI SIZE", { 923, 25, 68, 24 }, 11.0f, muted);
-    g.setColour(panel); g.fillRoundedRectangle(16.0f, 84.0f, 1088.0f, 185.0f, 9.0f);
-    text(g, "01  PITCH CORRECTION", { 32, 93, 350, 22 }, 13.0f, brass);
-    text(g, "NOTE FILTER", { 32, 173, 300, 18 }, 11.0f, muted);
-    g.setColour(face); g.drawVerticalLine(720, 101.0f, 252.0f);
-    text(g, "MONITOR", { 735, 99, 144, 22 }, 12.0f, brass);
-    const float pitch = processor.getDetectedPitch();
-    const int nearest = juce::roundToInt(pitch);
-    const juce::String detected = pitch < 0.0f ? "--" : noteNames[(nearest % 12 + 12) % 12] + juce::String(nearest / 12 - 1);
-    text(g, "NOTE  " + detected, { 735, 124, 130, 25 }, 15.0f, cream);
-    const float cents = processor.getCorrectionCents();
-    text(g, "SHIFT  " + juce::String(cents > 0.0f ? "+" : "") + juce::String(cents, 0) + " ct",
-         { 868, 124, 160, 25 }, 12.0f, muted, juce::Justification::centredRight);
-    meter(g, "IN", displayedInput, inputClipTicks > 0, 155);
-    meter(g, "OUT", displayedOutput, outputClipTicks > 0, 181);
-    text(g, "COMP GR", { 735, 213, 90, 22 }, 11.0f, muted);
-    const juce::Rectangle<float> gr(823.0f, 220.0f, 135.0f, 7.0f);
-    g.setColour(outer); g.fillRoundedRectangle(gr, 3.0f);
-    g.setColour(brass); g.fillRoundedRectangle(gr.withWidth(gr.getWidth() * juce::jlimit(0.0f, 1.0f, displayedReduction / 24.0f)), 3.0f);
-    text(g, juce::String(displayedReduction, 1) + " dB", { 960, 212, 68, 22 }, 11.0f, brass, juce::Justification::centredRight);
-    const auto confidence=juce::String(juce::roundToInt(processor.getPitchConfidence()*100.f));
-    const float target=processor.getTargetNote();
-    text(g, "CONF " + confidence + "%   TARGET " + (target<0 ? juce::String("--") : noteNames[(juce::roundToInt(target)%12+12)%12]),
-         {735,239,292,17},10.5f,muted);
-    text(g, "02  VOCAL PROCESSING", { 16, 275, 420, 22 }, 12.0f, muted);
-    for (size_t i = 0; i < modules.size(); ++i)
+    g.fillAll(black);if(steel.isValid()){g.setOpacity(.38f);g.drawImage(steel,surface.getLocalBounds().toFloat());g.setOpacity(1);}
+    g.setColour(silver.darker(.6f));g.drawRoundedRectangle(surface.getLocalBounds().toFloat().reduced(3),9,3);
+    g.setColour(silver);g.drawRoundedRectangle(surface.getLocalBounds().toFloat().reduced(5),8,1.5f);
+    g.setColour(black);g.drawRoundedRectangle(surface.getLocalBounds().toFloat().reduced(8),6,1);
+    g.setColour(panel.withAlpha(.97f));g.fillRoundedRectangle(125,78,1035,683,5);
+    g.setColour(black.withAlpha(.96f));g.fillRoundedRectangle(1165,78,105,683,4);
+    text(g,"JERZY",{20,15,100,30},25);text(g,"VOCAL STUDIO",{122,18,225,27},20,silver);
+    const double rate=processor.graphRate.load();const int latency=processor.getLatencySamples();
+    text(g,latency>0?"STUDIO  /  "+juce::String(1000.0*latency/rate,1)+" ms":"STUDIO  /  -- ms",{745,18,280,30},14,silver);
+    text(g,juce::String(pages[page])+"  /  "+juce::StringArray{"PITCH CORRECTION","SPECTRAL PREP + DE-ESS","DUAL-STAGE COMPRESSION","VOCAL EQ + COLOUR","REVERB + TEMPO DELAY","HARMONY + UNISON CHOIR","FORMANTS + BREATH"}[page],{145,87,810,28},17);
+    const auto r=plotBounds();
+    if(page==0)
     {
-        const auto r = modules[i].bounds;
-        const bool enabled = moduleButtons[i].getToggleState();
-        g.setColour(panel); g.fillRoundedRectangle(r.toFloat(), 8.0f);
-        g.setColour(enabled ? face : face.withAlpha(0.45f)); g.drawRoundedRectangle(r.toFloat(), 8.0f, 1.0f);
-        g.setColour(enabled ? brass : muted); g.fillRoundedRectangle(static_cast<float>(r.getX() + 10), static_cast<float>(r.getY() + 14), 3.0f, 10.0f, 1.0f);
-        text(g, modules[i].title, { r.getX() + 21, r.getY() + 7, r.getWidth() - 82, 23 }, 12.0f, enabled ? cream : muted);
+        g.setColour(black);g.fillRoundedRectangle(r,4);
+        const float pitch=processor.getDetectedPitch();const int centre=pitch>=0?int(std::round(pitch)):60;
+        for(int note=centre-6;note<=centre+6;++note)
+        {
+            const float y=r.getCentreY()-(note-centre)*r.getHeight()/12;
+            if(y<r.getY()||y>r.getBottom())continue;
+            g.setColour(raised);g.drawHorizontalLine(int(y),r.getX(),r.getRight());
+            text(g,juce::String(noteNames[(note%12+12)%12])+juce::String(note/12-1),{r.getX()+5,y-17,40,16},11,muted);
+        }
+        for(int i=0;i<9;++i){g.setColour(raised);g.drawVerticalLine(int(r.getX()+r.getWidth()*i/8),r.getY(),r.getBottom());}
+        for(int pass=0;pass<2;++pass)
+        {
+            juce::Path path;bool pen=false;
+            for(size_t i=0;i<pitchHistory.size();++i)
+            {
+                const size_t index=(historyWrite+i)%pitchHistory.size();const float v=pass==0?targetHistory[index]:pitchHistory[index];
+                if(v<0){pen=false;continue;}const float x=r.getX()+float(i)*r.getWidth()/float(pitchHistory.size()-1),y=juce::jlimit(r.getY(),r.getBottom(),r.getCentreY()-(v-centre)*r.getHeight()/12);
+                if(pen)path.lineTo(x,y);else path.startNewSubPath(x,y);pen=true;
+            }
+            g.setColour(pass==0?silver.withAlpha(.55f):white);g.strokePath(path,juce::PathStrokeType(pass==0?3.f:1.5f));
+        }
+        const int note=juce::roundToInt(pitch);text(g,pitch<0?"--":juce::String(noteNames[(note%12+12)%12])+juce::String(note/12-1),{800,121,105,39},30);
+        text(g,juce::String(processor.getCorrectionCents(),0)+" ct",{902,125,95,30},17,silver);
+        const int key=processor.getSuggestedKey();
+        text(g,key<0?"Analyse a phrase to suggest key":juce::String("Suggestion: ")+noteNames[key]+(processor.getSuggestedMinor()?" minor":" major")+" / "+juce::String(processor.getKeyConfidence()*100,0)+"%",{439,126,355,28},13,muted);
+        text(g,"INPUT PITCH  /  TARGET NOTE     Confidence "+juce::String(processor.getPitchConfidence()*100,0)+"%",{150,510,720,22},13,silver);
     }
-    g.setColour(panel); g.fillRoundedRectangle(16.f,780.f,1088.f,153.f,9.f);
-    text(g,"03  ADVANCED ENGINE",{32,785,250,22},12.f,brass);
-    text(g, "PITCH > GATE > NOISE > DE-ESS > SAT > DOUBLE > COMP > EQ > OUT > LIMIT",
-         { 18, 937, 850, 20 }, 10.5f, muted);
-    text(g, "Double-click: reset", { 883, 937, 220, 20 }, 11.0f, muted, juce::Justification::centredRight);
+    else if(page==1||page==3||page==6)
+    {
+        drawSpectrum(g,r,page!=3);
+        if(page==1)text(g,processor.getNoiseProgress()>0&&processor.getNoiseProgress()<1?"Learning noise: "+juce::String(processor.getNoiseProgress()*100,0)+"%":processor.hasNoiseProfile()?"Noise profile learned — "+juce::String(processor.getNoiseReduction(),1)+" dB spectral attenuation":"Play noise alone, then LEARN NOISE (1 second)",{315,126,630,28},13,silver);
+        if(page==6)text(g,"Estimated harmonic / aspiration shaping · use your ears to protect consonants",{150,126,790,26},13,muted);
+        if(page==3)
+        {
+            juce::Path curve;
+            for(int x=0;x<int(r.getWidth());++x)
+            {
+                const float hz=xFrequency(r.getX()+float(x),r),gain=processor.eqResponse(hz);
+                const float y=juce::jlimit(r.getY(),r.getBottom(),r.getCentreY()-gain*r.getHeight()/36);
+                if(x==0)curve.startNewSubPath(r.getX(),y);else curve.lineTo(r.getX()+float(x),y);
+            }
+            g.setColour(white);g.strokePath(curve,juce::PathStrokeType(2));
+            const auto value=[this](const char* id){return processor.parameters.getRawParameterValue(id)->load();};
+            const float hz[]={value("eqLowCut"),160,value("eqMidFreq"),10000,value("eqHighCut")};
+            const float gain[]={0,value("eqLow"),value("eqMid"),value("eqHigh"),0};
+            for(int i=0;i<5;++i)
+            {
+                const auto p=juce::Point<float>(frequencyX(hz[i],r),r.getCentreY()-gain[i]*r.getHeight()/36);
+                g.setColour(raised);g.fillEllipse(p.x-8,p.y-8,16,16);g.setColour(i==dragBand?white:silver);g.drawEllipse(p.x-8,p.y-8,16,16,1.5f);text(g,juce::String(i+1),{p.x-7,p.y-8,14,16},11,white,juce::Justification::centred);
+            }
+        }
+    }
+    else if(page==2)
+    {
+        for(int stage=0;stage<2;++stage)
+        {
+            auto chart=r.withWidth((r.getWidth()-30)*.5f).translated(stage*(r.getWidth()+30)*.5f,0);g.setColour(black);g.fillRoundedRectangle(chart,4);
+            const char* thresholdId=stage==0?"compThreshold":"comp2Threshold";const char* ratioId=stage==0?"compRatio":"comp2Ratio";
+            const float threshold=processor.parameters.getRawParameterValue(thresholdId)->load(),ratio=processor.parameters.getRawParameterValue(ratioId)->load();
+            for(int i=0;i<5;++i){g.setColour(raised);g.drawVerticalLine(int(chart.getX()+chart.getWidth()*i/4),chart.getY(),chart.getBottom());g.drawHorizontalLine(int(chart.getY()+chart.getHeight()*i/4),chart.getX(),chart.getRight());}
+            juce::Path path;for(int i=0;i<=100;++i){const float level=-60+.6f*i,out=level>threshold?threshold+(level-threshold)/ratio:level;const float x=chart.getX()+i*chart.getWidth()/100,y=dbY(out,chart,-60,0);if(i==0)path.startNewSubPath(x,y);else path.lineTo(x,y);}
+            const bool on=processor.parameters.getRawParameterValue(stage==0?"compEnabled":"comp2Enabled")->load()>.5f;
+            g.setColour(on?white:muted.withAlpha(.4f));g.strokePath(path,juce::PathStrokeType(2));led(g,{chart.getX()+12,chart.getY()+16},on);
+            text(g,juce::String(stage==0?"STAGE A":"STAGE B")+"   GR "+juce::String(stage==0?processor.getCompressorReduction():processor.getStageBReduction(),1)+" dB",{chart.getX()+27,chart.getY()+5,chart.getWidth()-30,24},14);
+        }
+        text(g,"Stereo-linked detection · sidechain and Warm controls in ALL CONTROLS",{150,425,950,25},13,muted);
+    }
+    else if(page==4)
+    {
+        g.setColour(black);g.fillRect(r);const float decay=processor.parameters.getRawParameterValue("reverbDecay")->load(),pre=processor.parameters.getRawParameterValue("reverbPreDelay")->load()*.001f;
+        for(int i=0;i<=4;++i){const float x=r.getX()+r.getWidth()*i/4;g.setColour(raised);g.drawVerticalLine(int(x),r.getY(),r.getBottom());text(g,juce::String((decay*1.2f+pre)*i/4,2)+" s",{x-25,r.getBottom()+2,60,18},11,muted);}
+        for(int i=0;i<=4;++i){const float y=r.getY()+r.getHeight()*i/4;g.setColour(raised);g.drawHorizontalLine(int(y),r.getX(),r.getRight());text(g,juce::String(-18*i)+" dB",{r.getX()+4,y,70,18},11,muted);}
+        juce::Path path;for(int i=0;i<240;++i){const float t=float(i)*(decay*1.2f+pre)/239;const float value=t<pre?-72.f:-60.f*(t-pre)/decay;const float x=r.getX()+r.getWidth()*i/239,y=juce::jlimit(r.getY(),r.getBottom(),dbY(value,r));if(i==0)path.startNewSubPath(x,y);else path.lineTo(x,y);}
+        g.setColour(white);g.strokePath(path,juce::PathStrokeType(2));
+        text(g,"DECAY TARGET  -60 dB / "+juce::String(decay,2)+" s   ·   Host tempo "+juce::String(processor.getTempo(),1)+" BPM",{150,126,800,28},14,silver);
+        text(g,"Algorithmic room / plate-style / hall · parallel sends · vocal ducking",{150,510,790,24},13,muted);
+    }
+    else if(page==5)
+    {
+        for(int v=0;v<4;++v)text(g,"VOICE "+juce::String(v+1),{145,float(270+v*90),100,28},15,silver);
+    }
+    g.setColour(silver.withAlpha(.3f));g.drawHorizontalLine(769,125,1267);
+    text(g,"PREP  >  TUNE  +  HARMONY  >  DYNAMICS  >  TONE  >  CHOIR / SPACE  >  LIMIT",{145,771,910,22},11,muted);
+    const juce::Rectangle<float> meterArea(1176,147,80,287);
+    for(int ch=0;ch<2;++ch)
+    {
+        const float x=meterArea.getX()+ch*43;const float level=ch==0?inputDb:outputDb;
+        text(g,ch==0?"IN":"OUT",{x-6,127,36,20},12,silver,juce::Justification::centred);
+        g.setColour(raised);g.fillRect(x,meterArea.getY(),13.f,meterArea.getHeight());
+        const float height=meterArea.getHeight()*juce::jlimit(0.f,1.f,(level+60)/60);g.setColour(white);g.fillRect(x,meterArea.getBottom()-height,13.f,height);
+        g.setColour(red);g.fillRect(x-2,meterArea.getY(),17.f,2.f);
+        const float peak=ch==0?processor.getInputOverload():processor.getOutputOverload();if(peak>=1){g.setColour(red);g.fillRect(x-2,meterArea.getY()-5,17.f,5.f);}
+        text(g,level<=-59?"-inf":juce::String(level,1),{x-10,437,42,18},11,silver,juce::Justification::centred);
+    }
 }
-
 void JerzyAutoTuneAudioProcessorEditor::timerCallback()
 {
-    const float input = processor.getInputPeak(), output = processor.getOutputPeak();
-    displayedInput = juce::jmax(juce::Decibels::gainToDecibels(input, -60.0f), displayedInput - 1.3f);
-    displayedOutput = juce::jmax(juce::Decibels::gainToDecibels(output, -60.0f), displayedOutput - 1.3f);
-    displayedReduction = juce::jmax(processor.getCompressorReduction(), displayedReduction - 0.5f);
-    inputClipTicks = input >= 1.0f ? 45 : juce::jmax(0, inputClipTicks - 1);
-    outputClipTicks = output >= 1.0f ? 45 : juce::jmax(0, outputClipTicks - 1);
-    updateControlStates();
+    processor.copyAnalysis(input,output);
+    std::array<float,4096> data{};
+    for(int pass=0;pass<2;++pass)
+    {
+        data.fill(0);for(size_t i=0;i<input.size();++i)data[i]=(pass==0?input[i]:output[i])*(.5f-.5f*std::cos(2*juce::MathConstants<float>::pi*float(i)/2048));
+        fft.performFrequencyOnlyForwardTransform(data.data());
+        auto& dest=pass==0?spectrum:processedSpectrum;
+        for(size_t i=0;i<dest.size();++i){const float value=juce::Decibels::gainToDecibels(data[i]/512.f,-90.f);dest[i]=.45f*value+.55f*dest[i];}
+    }
+    pitchHistory[historyWrite]=processor.getDetectedPitch();targetHistory[historyWrite]=processor.getTargetNote();reductionHistory[historyWrite]=processor.getCompressorReduction();stageBHistory[historyWrite]=processor.getStageBReduction();historyWrite=(historyWrite+1)%pitchHistory.size();
+    inputDb=juce::jmax(juce::Decibels::gainToDecibels(processor.getInputPeak(),-60.f),inputDb-1.5f);outputDb=juce::jmax(juce::Decibels::gainToDecibels(processor.getOutputPeak(),-60.f),outputDb-1.5f);
+    const float over=juce::jmax(processor.getInputOverload(),processor.getOutputOverload());resetPeak.setToggleState(over>=1,juce::dontSendNotification);resetPeak.setButtonText(over>=1?"OVER +"+juce::String(juce::Decibels::gainToDecibels(over),1):"PEAK RESET");
+    for(int i=0;i<7;++i)navigation[size_t(i)].getProperties().set("moduleState",processor.parameters.getRawParameterValue(pagePower[i])->load()>.5f);
+    undo.setEnabled(processor.undoManager.canUndo());applyKey.setEnabled(processor.getSuggestedKey()>=0);surface.repaint();
 }
-
-void JerzyAutoTuneAudioProcessorEditor::AnalogLookAndFeel::drawRotarySlider(
-    juce::Graphics& g, int x, int y, int width, int height, float position,
-    float startAngle, float endAngle, juce::Slider&)
+void JerzyAutoTuneAudioProcessorEditor::setReal(const char* id,float value)
 {
-    const float diameter = juce::jmax(10.0f, static_cast<float>(juce::jmin(width, height)) - 10.0f);
-    const float radius = diameter * 0.5f;
-    const float cx = x + width * 0.5f, cy = y + height * 0.5f;
-    const float angle = startAngle + position * (endAngle - startAngle);
-    juce::Path track, value;
-    track.addCentredArc(cx, cy, radius, radius, 0.0f, startAngle, endAngle, true);
-    value.addCentredArc(cx, cy, radius, radius, 0.0f, startAngle, angle, true);
-    g.setColour(face); g.strokePath(track, juce::PathStrokeType(2.0f));
-    g.setColour(brass); g.strokePath(value, juce::PathStrokeType(2.5f));
-    const float r = radius - 5.0f;
-    g.setGradientFill(juce::ColourGradient(juce::Colour(88, 91, 84), cx, cy - r, outer, cx, cy + r, false));
-    g.fillEllipse(cx - r, cy - r, r * 2.0f, r * 2.0f);
-    g.setColour(cream);
-    g.drawLine(cx + std::sin(angle) * r * 0.4f, cy - std::cos(angle) * r * 0.4f,
-               cx + std::sin(angle) * r * 0.85f, cy - std::cos(angle) * r * 0.85f, 2.1f);
+    auto* p=processor.parameters.getParameter(id);p->beginChangeGesture();p->setValueNotifyingHost(p->convertTo0to1(value));p->endChangeGesture();
+}
+void JerzyAutoTuneAudioProcessorEditor::chartMouseDown(const juce::MouseEvent& event)
+{
+    if(page!=3||!plotBounds().contains(event.position))return;
+    const auto r=plotBounds();const auto value=[this](const char* id){return processor.parameters.getRawParameterValue(id)->load();};
+    const float hz[]={value("eqLowCut"),160,value("eqMidFreq"),10000,value("eqHighCut")},gain[]={0,value("eqLow"),value("eqMid"),value("eqHigh"),0};
+    float best=24;dragBand=-1;
+    for(int i=0;i<5;++i){const float distance=event.position.getDistanceFrom({frequencyX(hz[i],r),r.getCentreY()-gain[i]*r.getHeight()/36});if(distance<best){best=distance;dragBand=i;}}
+    if(dragBand>=0){processor.undoManager.beginNewTransaction("Drag EQ band");for(auto* id:{"eqLowCut","eqLow","eqMidFreq","eqMid","eqHigh","eqHighCut"})processor.parameters.getParameter(id)->beginChangeGesture();chartMouseDrag(event);}
+}
+void JerzyAutoTuneAudioProcessorEditor::chartMouseDrag(const juce::MouseEvent& event)
+{
+    if(dragBand<0)return;const auto r=plotBounds();const float hz=xFrequency(event.position.x,r),gain=juce::jlimit(-12.f,12.f,(r.getCentreY()-event.position.y)*36/r.getHeight());
+    const auto set=[this](const char* id,float v){auto* p=processor.parameters.getParameter(id);p->setValueNotifyingHost(p->convertTo0to1(juce::jlimit(p->convertFrom0to1(0),p->convertFrom0to1(1),v)));};
+    if(dragBand==0)set("eqLowCut",hz);if(dragBand==1)set("eqLow",gain);if(dragBand==2){set("eqMidFreq",hz);set("eqMid",gain);}if(dragBand==3)set("eqHigh",gain);if(dragBand==4)set("eqHighCut",hz);surface.repaint();
+}
+void JerzyAutoTuneAudioProcessorEditor::chartMouseUp(const juce::MouseEvent&)
+{
+    if(dragBand>=0)for(auto* id:{"eqLowCut","eqLow","eqMidFreq","eqMid","eqHigh","eqHighCut"})processor.parameters.getParameter(id)->endChangeGesture();dragBand=-1;
+}
+void JerzyAutoTuneAudioProcessorEditor::Surface::mouseWheelMove(const juce::MouseEvent& e,const juce::MouseWheelDetails& wheel)
+{
+    if(owner.page==3&&owner.plotBounds().contains(e.position)){const auto current=owner.processor.parameters.getRawParameterValue("eqMidQ")->load();owner.setReal("eqMidQ",juce::jlimit(.3f,6.f,current+wheel.deltaY*2));}
 }

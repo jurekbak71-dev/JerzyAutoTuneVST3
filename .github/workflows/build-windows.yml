@@ -1,82 +1,118 @@
-name: Build JERZY AUTO TUNE 2.0 (Windows)
-
+name: Build Vocal Studio 3.0 and Windows Installer
 on:
   push:
-    branches:
-      - main
-      - codex/vst3-2.0
-    paths:
-      - 'Source/**'
-      - 'tests/**'
-      - 'CMakeLists.txt'
-      - 'BUILD_TRIGGER.txt'
-      - '.github/workflows/build-windows.yml'
+    branches: [main, codex/vst3-2.0]
+    paths: ['Source/**', 'tests/**', 'installer/**', 'CMakeLists.txt', 'BUILD_TRIGGER.txt', '.github/workflows/build-windows.yml']
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
-
 permissions:
-  contents: read
-
+  contents: write
+  checks: write
 jobs:
   build:
     runs-on: windows-2022
+    timeout-minutes: 60
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Configure clean x64 Release build
-        run: cmake -S . -B build -A x64 -DBUILD_TESTING=ON
-
-      - name: Build VST3
-        run: cmake --build build --config Release --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSPTests
-
-      - name: Test GUI, parameter wiring and audio regressions
-        run: ctest --test-dir build -C Release --output-on-failure
-
-      - name: Upload GUI previews
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: AutoTune-GUI-previews
-          path: build/gui-previews/*.png
-          if-no-files-found: warn
-
-      - name: Verify editor and DSP are present
+      - uses: actions/checkout@v4
+      - name: Configure Windows x64
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64 -DBUILD_TESTING=ON -DJERZY_ENABLE_LTO=ON 2>&1 | Tee-Object configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build VST3 and regression tests
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSPTests --parallel 2 2>&1 | Tee-Object compile.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native GUI and audio regression tests
+        shell: pwsh
+        run: |
+          ctest --test-dir build -C Release --output-on-failure 2>&1 | Tee-Object tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify native binary and metadata
         shell: pwsh
         run: |
           $plugin = 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3'
-          $moduleInfo = Get-Content "$plugin/Contents/Resources/moduleinfo.json" -Raw
-          if ($moduleInfo -notmatch '"Name":\s*"JERZY AUTO TUNE"' -or $moduleInfo -notmatch '"Version":\s*"2\.0\.0"') {
-            throw 'VST3 module name or version is incorrect.'
-          }
-          $binary = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes("$plugin/Contents/x86_64-win/JERZY AUTO TUNE.vst3"))
-          foreach ($requiredText in @(
-            'JERZY AUTO TUNE', 'NOTE FILTER',
-            'Gate Threshold', 'Gate Range', 'Gate Attack', 'Gate Hold', 'Gate Release',
-            'Noise Threshold', 'Noise Reduction', 'Noise Release', 'Noise High Pass',
-            'De-Esser Threshold', 'De-Esser Frequency', 'De-Esser Range', 'De-Esser Release',
-            'Saturation Drive', 'Saturation Tone', 'Saturation Mix', 'Saturation Output',
-            'Doubler Mix', 'Doubler Delay', 'Doubler Detune', 'Doubler Width',
-            'Comp Threshold', 'Comp Ratio', 'Comp Attack', 'Comp Release', 'Comp Knee', 'Comp Makeup',
-            'Limiter Ceiling',
-            'EQ Low Cut', 'EQ Body', 'EQ Mid Frequency', 'EQ Presence', 'EQ Mid Q', 'EQ Air', 'EQ High Cut',
-            'Output'
-          )) {
-            if (-not $binary.Contains($requiredText)) {
-              throw "Built VST3 is missing expected UI/parameter string: $requiredText"
-            }
-          }
-
-      - name: Package VST3
+          $module = Get-Content "$plugin/Contents/Resources/moduleinfo.json" -Raw
+          if ($module -notmatch '"Version":\s*"3\.0\.0"') { throw 'Wrong VST3 module version' }
+          $bytes = [IO.File]::ReadAllBytes("$plugin/Contents/x86_64-win/JERZY AUTO TUNE.vst3")
+          if ($bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Windows PE binary missing' }
+          $pe = [BitConverter]::ToInt32($bytes,60)
+          if ([BitConverter]::ToUInt16($bytes,$pe+4) -ne 0x8664) { throw 'Binary is not Windows x64' }
+      - name: Validate VST3 with pluginval 1.0.4
         shell: pwsh
         run: |
-          Compress-Archive -Path 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3' -DestinationPath 'JERZY-AUTO-TUNE-2.0-Windows-x64-VST3.zip' -Force
-
-      - name: Upload VST3 artifact
-        uses: actions/upload-artifact@v4
+          $release = Invoke-RestMethod 'https://api.github.com/repos/Tracktion/pluginval/releases/tags/v1.0.4'
+          $asset = $release.assets | Where-Object name -eq 'pluginval_Windows.zip' | Select-Object -First 1
+          if (!$asset) { throw 'Pinned validator asset missing' }
+          Invoke-WebRequest $asset.browser_download_url -OutFile pluginval.zip
+          $hash = (Get-FileHash pluginval.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($asset.digest -and $asset.digest -ne "sha256:$hash") { throw 'Validator artifact checksum mismatch' }
+          "pluginval 1.0.4 archive SHA256 $hash" | Tee-Object validator-download.log
+          Expand-Archive pluginval.zip pluginval
+          $validator = Get-ChildItem pluginval -Recurse -Filter pluginval.exe | Select-Object -First 1
+          if (!$validator) { throw 'pluginval executable missing' }
+          $plugin = (Resolve-Path 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3').Path
+          & $validator.FullName --strictness-level 5 --random-seed 71 --timeout-ms 180000 --output-dir validation --validate $plugin 2>&1 | Tee-Object pluginval.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build native Inno Setup installer
+        shell: pwsh
+        run: |
+          $iscc = 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
+          if (!(Test-Path $iscc)) { throw 'Inno Setup compiler not installed on runner' }
+          $plugin = (Resolve-Path 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3').Path
+          & $iscc "/DPluginDir=$plugin" '/DMyAppVersion=3.0.0' installer/JerzyVocalStudio.iss 2>&1 | Tee-Object installer.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash dist/*Setup.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content dist/SHA256.txt
+      - name: Test installer and installed plugin
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist/*Setup.exe | Select-Object -First 1).FullName
+          $install = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/LOG=install-smoke.log' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
+          $installed = 'C:/Program Files/Common Files/VST3/JERZY AUTO TUNE.vst3'
+          if (!(Test-Path "$installed/Contents/x86_64-win/JERZY AUTO TUNE.vst3")) { throw 'Installed VST3 missing' }
+          $validator = Get-ChildItem pluginval -Recurse -Filter pluginval.exe | Select-Object -First 1
+          & $validator.FullName --strictness-level 5 --random-seed 71 --timeout-ms 180000 --output-dir installed-validation --validate $installed 2>&1 | Tee-Object installed-pluginval.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $uninstaller = 'C:/Program Files/Jerzy Audio/Vocal Studio/unins000.exe'
+          if (!(Test-Path $uninstaller)) { throw 'Uninstaller missing' }
+          $uninstall = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw 'Uninstaller failed' }
+          for ($i=0;$i -lt 10 -and (Test-Path "$installed/Contents/x86_64-win/JERZY AUTO TUNE.vst3");$i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path "$installed/Contents/x86_64-win/JERZY AUTO TUNE.vst3") { throw 'Uninstaller left plugin binary behind' }
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: JERZY-AUTO-TUNE-2.0-Windows-x64-VST3
-          path: JERZY-AUTO-TUNE-2.0-Windows-x64-VST3.zip
+          name: VocalStudio-GUI-and-validation
+          path: |
+            build/gui-previews/studio-*.png
+            build/Testing/Temporary/LastTest.log
+            validation/
+            installed-validation/
+            *.log
+          if-no-files-found: warn
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JerzyVocalStudio-3.0.0-Windows-x64-Installer
+          path: |
+            dist/*Setup.exe
+            dist/SHA256.txt
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
+      - name: Publish diagnostic report
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          $lines = @()
+          foreach ($file in @('configure.log','compile.log','tests.log','pluginval.log','installer.log','installed-pluginval.log')) { if (Test-Path $file) { $lines += Get-Content $file -Tail 50 } }
+          $text = $lines -join "`n"
+          if ($text.Length -gt 58000) { $text = $text.Substring($text.Length-58000) }
+          $body = @{name='Vocal Studio Windows validation';head_sha=$env:GITHUB_SHA;status='completed';conclusion=$env:JOB_RESULT;output=@{title='Build, tests, pluginval, installer';summary='Native Windows build and installer verification';text=$text}} | ConvertTo-Json -Depth 5
+          $body | Set-Content diagnostics.json -Encoding utf8
+          gh api "repos/$env:GITHUB_REPOSITORY/check-runs" --method POST --input diagnostics.json

@@ -3,6 +3,8 @@
 #include <JuceHeader.h>
 #include <signalsmith-stretch/signalsmith-stretch.h>
 #include "VocalDSP.h"
+#include "StudioDSP.h"
+#include "StudioParameters.h"
 #include <array>
 #include <atomic>
 
@@ -21,10 +23,10 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
     const juce::String getName() const override { return "JERZY AUTO TUNE"; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.50; }
+    double getTailLengthSeconds() const override;
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
@@ -34,7 +36,25 @@ public:
     void setStateInformation(const void*, int) override;
 
     using APVTS = juce::AudioProcessorValueTreeState;
+    juce::UndoManager undoManager;
     APVTS parameters;
+    void learnNoise() noexcept { spectralPrep->requestLearn.store(true); }
+    float getNoiseProgress() const noexcept { return spectralPrep->progress.load(); }
+    bool hasNoiseProfile() const noexcept { return spectralPrep->profileReady.load(); }
+    float getNoiseReduction() const noexcept { return spectralPrep->removedDb.load(); }
+    float getStageBReduction() const noexcept { return stageBReduction.load(); }
+    float getInputOverload() const noexcept { return inputOverload.load(); }
+    float getOutputOverload() const noexcept { return outputOverload.load(); }
+    void resetOverload() noexcept { inputOverload.store(0); outputOverload.store(0); }
+    void learnKey() noexcept { resetKeyAnalysis.store(true); }
+    int getSuggestedKey() const noexcept { return suggestedKey.load(); }
+    bool getSuggestedMinor() const noexcept { return suggestedMinor.load(); }
+    float getKeyConfidence() const noexcept { return suggestedConfidence.load(); }
+    double getTempo() const noexcept { return tempo.load(); }
+    void applySuggestedKey();
+    void applyFactoryPreset(int index);
+    void copyAnalysis(std::array<float,2048>& in, std::array<float,2048>& out) const noexcept { analysis.copy(in,out); }
+    float eqResponse(float frequency) const noexcept;
     float getOutputPeak() const noexcept { return outputPeak.load(std::memory_order_relaxed); }
     float getInputPeak() const noexcept { return inputPeak.load(std::memory_order_relaxed); }
 
@@ -62,6 +82,28 @@ private:
         float process(float input, float smoothing) noexcept;
     };
 
+    std::unique_ptr<jerzy::studio::SpectralPrep> spectralPrep = std::make_unique<jerzy::studio::SpectralPrep>();
+    jerzy::studio::Compressor stageA, stageB;
+    jerzy::studio::Space space;
+    jerzy::studio::Choir choir;
+    jerzy::studio::KeyDetector keyDetector;
+    jerzy::studio::AnalysisTap analysis;
+    std::atomic<float> stageBReduction {0}, inputOverload {0}, outputOverload {0}, suggestedConfidence {0}, graphRate {44100};
+    std::atomic<int> suggestedKey {-1};
+    std::atomic<bool> suggestedMinor {false}, resetKeyAnalysis {false};
+    std::atomic<double> tempo {120};
+    std::array<std::unique_ptr<signalsmith::stretch::SignalsmithStretch<float>>,4> harmonyEngines;
+    std::array<juce::AudioBuffer<float>,4> harmonyOutput;
+    std::array<std::array<std::atomic<float>*,5>,4> harmonyParameters {};
+    std::array<bool,128> heldMidi {}, sustainedMidi {};
+    bool sustainPedal=false, harmonyWasActive=false;
+    int harmonyWarm=0;
+    uint64_t sampleClock=0;
+    std::array<juce::SmoothedValue<float>,4> harmonyLevels;
+    juce::SmoothedValue<float> harmonyFade, stageBFade, masterFade;
+    juce::AudioBuffer<float> masterDelay;
+    int masterWrite=0, masterRingLength=1;
+    std::array<float,2> hardLow {}, hardHigh {}, hardEnvelope {}, satPrevious {}, satDc {};
     jerzy::PitchTracker pitchTracker;
     jerzy::OutputLimiter finalLimiter;
     std::array<juce::SmoothedValue<float>, 7> bypassMix;
@@ -84,7 +126,7 @@ private:
     int seekInputLength = 0, startupInputCount = 0;
     bool stretcherReady = false;
     juce::AudioBuffer<float> stretchedBuffer, dryDelayBuffer, startupBuffer;
-    signalsmith::stretch::SignalsmithStretch<float> stretcher;
+    signalsmith::stretch::SignalsmithStretch<float> stretcher { 71 };
     juce::SmoothedValue<float> mixSmoother, speedSmoother;
 
     std::array<float, 2> gateEnvelope {}, gateGain {};
@@ -97,7 +139,7 @@ private:
     juce::AudioBuffer<float> doublerBuffer;
     std::array<std::array<Biquad, 5>, 2> vocalEq;
 
-    std::atomic<int> editorWidth { 1008 }, editorHeight { 864 };
+    std::atomic<int> editorWidth { 1280 }, editorHeight { 800 };
     std::atomic<float> displayPitch { -1.0f }, displayCorrection { 0.0f }, compressorReduction { 0.0f };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
 

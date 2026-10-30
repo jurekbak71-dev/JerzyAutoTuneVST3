@@ -1,51 +1,44 @@
-# JERZY AUTO TUNE 2.0 — Advanced Vocal Processor
+# Jerzy Vocal Studio 3.0 / JERZY AUTO TUNE VST3
 
-VST3 vocal pitch correction and processing, developed from version 1.5.0 (`48207fd`) with an independent Advanced DSP engine. The target is Windows 10/11 x64, FL Studio and other VST3 hosts. Native Windows/FL Studio qualification remains required before a production release; Linux regression results do not establish commercial-product equivalence.
+Native Windows 10/11 x64 vocal processor, extended from JerzyAutoTuneVST3 rather than replaced. The host-visible name remains **JERZY AUTO TUNE** and the original VST identity and 68 existing parameter IDs are retained. The Steel Studio interface exposes 143 automated parameters across Tune, Clean, Dynamics, Tone, Space, Harmony and Voice.
 
-## Processing
+## Processing and interface
 
-Pitch correction → Gate → Noise Filter → De-Esser → Saturation → Doubler → Compressor → Vocal EQ → Output → Final Limiter
+- Sample-rate-aware YIN pitch tracking, confidence, note transitions, scale/note mask, vibrato preservation, independent transpose and spectral-envelope formant compensation using pinned Signalsmith Stretch.
+- Learned spectral noise reduction: learn approximately one second of isolated noise, then adjust reduction and audition the removed signal. Noise profiles are saved with the session and invalidated at a different sample rate.
+- Two independent stereo-linked compressors with Clean, Fast FET and two optical-style envelope responses, sidechain high-pass and Warm shaping. Soft and transient hard-sibilance controls.
+- Existing vocal EQ with draggable response nodes, saturation models and fractional-delay doubler.
+- Algorithmic room, plate-style and hall reverberation; tempo-synced or free-time ping-pong delay; wet ducking.
+- Four independently configured harmony voices, interval/scale/MIDI modes, per-voice gain, pan and formant. Fractional-delay choir with 4/8/16/32 unison voices.
+- Spectral breath/character shaping; key suggestion from confident monophonic phrases with explicit Apply.
+- Oxidized steel, black and dirty silver native vector interface. Red zero ticks and overload indicators; green ON / red OFF LEDs with text. Focus view and ALL CONTROLS, typed values, zoom, session size recall, factory presets, A/B and undo.
+- Final stereo-linked lookahead sample-peak limiter after effects and output trim. Latency-compensated master bypass.
 
-- Sample-rate-aware monophonic YIN pitch tracking, 50–1200 Hz, confidence and voiced/unvoiced gating, harmonic tests and persistent note transitions.
-- Key, scale and 12-note mask; Speed, Amount and Mix; new Vibrato Preserve, Note Stability, A4 reference and independent Transpose controls.
-- Explicit spectral-envelope compensation and independent Formant Shift using the existing pinned Signalsmith Stretch library. Correction controls are aligned to the spectral processing clock.
-- Fractional interpolated doubler delay; the original detune control remains nominal modulation depth rather than a constant-cent shift.
-- Smooth 10 ms module bypasses with continuously updated states in Advanced mode. Output and formant changes are smoothed.
-- Independent stereo-linked 3 ms lookahead limiter **after** EQ and output trim. It bounds sample peaks, not intersample/true peaks. Limiter bypass keeps host latency constant.
-- Vector hardware interface, all 68 automated parameters, typed values, fine adjustment, zoom, remembered size, input/output meters, compressor reduction, detected/target note and confidence.
+This is a **Studio-latency** processor; the host receives the actual latency. It does not promise low-latency live monitoring. The limiter bounds sample peaks, not intersample true peaks. Learned noise reduction and voice shaping are independently implemented DSP, not trained AI or a complete physical vocal-tract simulation. Key suggestion does not analyze polyphonic files or infer BPM; delay reads host tempo. Manual offline note editing is not implemented. Commercial-product equivalence is not asserted.
 
-The Noise Filter retains the original expander/high-pass design; it is not a learned spectral denoiser. This release does not implement graphical offline note editing, MIDI-controlled tuning or polyphonic processing.
+## Install
 
-## Existing sessions
+Use the Windows x64 Setup executable produced by the Windows workflow. Close the DAW before installing; the bundle goes to `C:\Program Files\Common Files\VST3\JERZY AUTO TUNE.vst3`. Rescan plugins in FL Studio. Back up existing projects before replacing an older installed version. Legacy states select the original legacy pitch engine; new effect parameters receive safe defaults. Real FL Studio project recall and listening remain manual qualification tasks.
 
-The original 60 parameter IDs, order, ranges and defaults, APVTS state type and VST3 identity (`JzAu` / `JzB4`, `audio.jerzy.autotune.v14`) are retained. Eight parameters are appended. Old states automatically select **Legacy 1.5**, retaining the original detector, doubler and soft clipper. Choose **Advanced** to use the new DSP. Legacy mode deliberately retains its old DSP limitations.
+## Build and validation
 
-The final 3 ms delay is reported to the host in both modes. Window height is clamped to the new minimum of 720 pixels. Check real project recall and PDC in FL Studio before replacing an installed production version. Engine selection is best made before playback.
-
-## Windows x64 build and tests
-
-Requires CMake 3.24+, Visual Studio 2022 with C++ desktop tools, Git and Internet access for the pinned JUCE 8.0.6 and Signalsmith dependencies.
+Windows: Visual Studio 2022 C++ tools, CMake 3.24+, Git. Dependencies: JUCE 8.0.6 and Signalsmith Stretch pinned in CMake.
 
 ```powershell
 cmake -S . -B build -A x64 -DBUILD_TESTING=ON
-cmake --build build --config Release --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSPTests --parallel 4
+cmake --build build --config Release --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSPTests --parallel 2
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The plugin bundle is `build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3`. The Windows workflow builds all three targets, runs both suites, verifies module metadata and packages the bundle. Updating the workflow here does not mean that a GitHub Actions run has executed.
+The Windows workflow additionally validates the VST3 using pluginval 1.0.4 strictness 5, builds an Inno Setup installer, installs it, validates the installed plugin, then uninstalls it. Artifacts include installer, SHA256 and validation logs. A workflow definition alone is not evidence of a successful run.
 
-## Cloud Linux development
-
-This task's local toolchain and JUCE headers/libraries live outside the checkout under `/workspace/.jerzy-env`. No system administrator access is required. Installation/start instructions are saved separately in the cloud environment configuration.
+Linux cloud development:
 
 ```bash
 source /workspace/.jerzy-env/activate.sh
-cd /workspace/JerzyAutoTuneVST3
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_CXX_STANDARD_LIBRARIES=-flto=2
-cmake --build build --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSPTests --parallel 4
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DJERZY_ENABLE_LTO=OFF -DCMAKE_CXX_STANDARD_LIBRARIES=
+cmake --build build --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSPTests -j4
 xvfb-run -a ctest --test-dir build --output-on-failure
 ```
 
-The `-flto=2` override is specific to the cloud GCC toolchain and limits link-time parallelism. Do not pass it to MSVC. GUI snapshots are generated in `build/gui-previews`.
-
-See [baseline audit](docs/AUDIT-1.5.md), [DSP design and limits](docs/DSP-2.0.md) and [validation record](docs/VALIDATION.md).
+Regression coverage includes 95 detector/limiter cases, 17 studio audio cases, all 143 parameter bindings, scaling, hit targets, state recall and native section screenshots. See [research](docs/RESEARCH-3.0.md), [original audit](docs/AUDIT-1.5.md), [pitch DSP](docs/DSP-2.0.md) and [third-party notices](docs/THIRD-PARTY-NOTICES.md).

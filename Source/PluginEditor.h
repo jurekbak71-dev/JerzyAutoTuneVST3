@@ -1,77 +1,63 @@
 #pragma once
-
 #include "PluginProcessor.h"
-#include "JerzyVSTGuiKit.h"
 
-class JerzyAutoTuneAudioProcessorEditor final : public juce::AudioProcessorEditor,
-                                                private juce::Timer
+class JerzyAutoTuneAudioProcessorEditor final : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
     explicit JerzyAutoTuneAudioProcessorEditor(JerzyAutoTuneAudioProcessor&);
     ~JerzyAutoTuneAudioProcessorEditor() override;
     void paint(juce::Graphics&) override;
     void resized() override;
-
+    void showPage(int index, bool allControls = false);
 private:
-    using ComboAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
-    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
-    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-
-    class AnalogLookAndFeel final : public JerzyAudioUI::HardwareLookAndFeel
+    struct StudioLookAndFeel final : juce::LookAndFeel_V4
     {
-    public:
-        AnalogLookAndFeel();
-        void drawRotarySlider(juce::Graphics&, int, int, int, int, float,
-                              float, float, juce::Slider&) override;
-        juce::Font getLabelFont(juce::Label&) override;
+        StudioLookAndFeel();
+        void drawRotarySlider(juce::Graphics&,int,int,int,int,float,float,float,juce::Slider&) override;
+        void drawToggleButton(juce::Graphics&,juce::ToggleButton&,bool,bool) override;
+        void drawButtonBackground(juce::Graphics&,juce::Button&,const juce::Colour&,bool,bool) override;
+        juce::Font getTextButtonFont(juce::TextButton&,int) override;
         juce::Font getComboBoxFont(juce::ComboBox&) override;
-        juce::Font getTextButtonFont(juce::TextButton&, int) override;
+        juce::Font getLabelFont(juce::Label&) override;
     };
-
-    class Surface final : public juce::Component
+    struct ParameterControl;
+    struct Surface final : juce::Component
     {
-    public:
         explicit Surface(JerzyAutoTuneAudioProcessorEditor& e) : owner(e) {}
         void paint(juce::Graphics& g) override { owner.paintSurface(g); }
-    private:
+        void mouseDown(const juce::MouseEvent& e) override { owner.chartMouseDown(e); }
+        void mouseDrag(const juce::MouseEvent& e) override { owner.chartMouseDrag(e); }
+        void mouseUp(const juce::MouseEvent& e) override { owner.chartMouseUp(e); }
+        void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails&) override;
         JerzyAutoTuneAudioProcessorEditor& owner;
     };
-
     void paintSurface(juce::Graphics&);
+    void drawSpectrum(juce::Graphics&,juce::Rectangle<float>,bool showOutput);
     void timerCallback() override;
-    void configureSlider(juce::Slider&, const juce::String&, const juce::String&);
-    void configureLabel(juce::Label&, const juce::String&);
     void layoutControls();
-    void setAllNotes(bool);
-    void updateControlStates();
-
+    void chartMouseDown(const juce::MouseEvent&);
+    void chartMouseDrag(const juce::MouseEvent&);
+    void chartMouseUp(const juce::MouseEvent&);
+    juce::Rectangle<float> plotBounds() const;
+    ParameterControl* control(const juce::String&) const;
+    void setReal(const char*,float);
     JerzyAutoTuneAudioProcessor& processor;
-    // Declared before components; it must outlive their destruction.
-    AnalogLookAndFeel analogLookAndFeel;
+    StudioLookAndFeel look;
     Surface surface { *this };
-    juce::TooltipWindow tooltips { this, 650 };
-    juce::ComboBox keyBox, scaleBox, zoomBox, engineBox;
-    juce::ToggleButton formantButton { "Preserve formants" }, limiterButton { "Final limiter" };
-    std::array<juce::Slider, 5> advancedSliders;
-    std::array<juce::Label, 5> advancedLabels;
-    std::unique_ptr<ComboAttachment> engineAttachment;
-    std::array<std::unique_ptr<ButtonAttachment>, 2> advancedButtons;
-    std::array<std::unique_ptr<SliderAttachment>, 5> advancedAttachments;
-    std::array<juce::TextButton, 12> noteButtons;
-    juce::TextButton allNotes { "ALL" }, noNotes { "NONE" };
-    juce::Slider speedSlider, amountSlider, mixSlider;
-    juce::Label keyLabel, scaleLabel, speedLabel, amountLabel, mixLabel, noteStatus;
-    static constexpr size_t vocalControlCount = 36;
-    std::array<juce::Slider, vocalControlCount> vocalSliders;
-    std::array<juce::Label, vocalControlCount> vocalLabels;
-    std::array<juce::TextButton, 7> moduleButtons;
-
-    std::unique_ptr<ComboAttachment> keyAttachment, scaleAttachment;
-    std::array<std::unique_ptr<ButtonAttachment>, 12> noteAttachments;
-    std::unique_ptr<SliderAttachment> speedAttachment, amountAttachment, mixAttachment;
-    std::array<std::unique_ptr<SliderAttachment>, vocalControlCount> vocalSliderAttachments;
-    std::array<std::unique_ptr<ButtonAttachment>, 7> moduleButtonAttachments;
-    float displayedInput = -60.0f, displayedOutput = -60.0f, displayedReduction = 0.0f;
-    int inputClipTicks = 0, outputClipTicks = 0;
+    juce::TooltipWindow tips { this,650 };
+    juce::Image steel;
+    std::array<juce::TextButton,7> navigation;
+    juce::ComboBox presets,zoom;
+    juce::TextButton compare { "A / B" },undo { "UNDO" },advancedButton { "ALL CONTROLS" },learnNoise { "LEARN NOISE" },learnKey { "ANALYSE KEY" },applyKey { "APPLY KEY" },resetPeak { "PEAK RESET" },allNotes { "ALL NOTES" },noNotes { "CLEAR NOTES" };
+    juce::OwnedArray<ParameterControl> parameters,master;
+    juce::ValueTree compareState;
+    juce::dsp::FFT fft {11};
+    std::array<float,2048> input {},output {};
+    std::array<float,1025> spectrum {},processedSpectrum {};
+    std::array<float,260> pitchHistory {},targetHistory {},reductionHistory {},stageBHistory {};
+    size_t historyWrite=0;
+    float inputDb=-60,outputDb=-60;
+    int page=0,dragBand=-1;
+    bool expanded=false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(JerzyAutoTuneAudioProcessorEditor)
 };
