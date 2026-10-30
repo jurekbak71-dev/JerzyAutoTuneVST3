@@ -15,6 +15,6 @@ Resolved findings:
 
 Remaining P3 differences: the fonts approximate the reference's condensed lettering; the typography and material rendering are not pixel-identical to the generated contact sheet. Space presents the implemented decay target rather than inventing a measured impulse response. Harmony interval sliders retain the existing host parameter type. The master strip additionally exposes the actual limiter ceiling and bypass. These are explicit functional adaptations.
 
-Validation: native Linux GUI/audio tests and visual review; Windows x64 build, pluginval, upgrade and installer checks are recorded separately after execution. Manual FL Studio listening/high-DPI qualification remains distinct from visual implementation.
+Validation: native Linux and Windows GUI/audio tests passed, including caption size/width checks. Windows x64 build, pluginval, RC1 upgrade and installer checks passed in run 41051655932. The release screenshots were downloaded and the Windows Tune capture was visually reviewed. See docs/VALIDATION-3.0.1.md. Manual FL Studio listening/high-DPI qualification remains distinct from visual implementation.
 
 final result: passed
