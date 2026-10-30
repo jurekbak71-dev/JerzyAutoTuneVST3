@@ -26,6 +26,11 @@ void checkControls(juce::Component& root, juce::Component& editor, std::set<juce
     for (auto* c : root.getChildren())
     {
         if(!c->isVisible())continue; // Other pages are checked through the visible-parameter union below.
+        if(auto* label=dynamic_cast<juce::Label*>(c);label&&label->getComponentID()=="parameterCaption")
+        {
+            require(label->getFont().getHeight()>=16.f,"Parameter caption is too small");
+            require(label->getFont().getStringWidthFloat(label->getText())<=float(label->getWidth())+1.f,("Caption clipped: "+label->getText()).toRawUTF8());
+        }
         if (auto* parameter = processor.parameters.getParameter(c->getComponentID()))
         {
             const auto bounds = editor.getLocalArea(c, c->getLocalBounds());
@@ -99,6 +104,29 @@ int main()
                 if(size==juce::Point<int>(1280,800))capture(*editor,"studio-"+juce::String(page)+"-focus");
             }
             require(ids.size()==static_cast<size_t>(processor.getParameters().size()),"A parameter is missing from studio pages");
+        }
+        {
+            auto preview=std::make_unique<JerzyAutoTuneAudioProcessor>();setParameter(*preview,"key",9);setParameter(*preview,"scale",2);preview->prepareToPlay(48000,128);
+            auto previewEditor=std::unique_ptr<juce::AudioProcessorEditor>(preview->createEditor());previewEditor->setVisible(true);
+            auto* native=dynamic_cast<JerzyAutoTuneAudioProcessorEditor*>(previewEditor.get());
+            juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;int sample=0;double demoPhase=0;
+            for(int frame=0;frame<260;++frame)
+            {
+                for(int block=0;block<12;++block)
+                {
+                    for(int i=0;i<128;++i,++sample)
+                    {
+                        const float t=float(sample)/48000.f;
+                        const int steps[]={0,0,2,3,3,2,-2,0};const float frequency=220.f*std::pow(2.f,(steps[juce::jmin(7,int(t))]+.18f*std::sin(t*31.f))/12.f);
+                        demoPhase+=2*juce::MathConstants<double>::pi*frequency/48000.;const float phase=float(demoPhase);
+                        const float value=.16f*(std::sin(phase)+.25f*std::sin(2*phase)+.12f*std::sin(3*phase))*(.75f+.25f*std::sin(t*3.f));
+                        audio.setSample(0,i,value);audio.setSample(1,i,value);
+                    }
+                    preview->processBlock(audio,midi);
+                }
+                native->refreshDisplay();
+            }
+            for(int page=0;page<7;++page){native->showPage(page,false);capture(*previewEditor,"studio-"+juce::String(page)+"-focus");native->showPage(page,true);capture(*previewEditor,"studio-"+juce::String(page)+"-all-controls");}
         }
         studio->showPage(0,false);
         auto* zoom=dynamic_cast<juce::ComboBox*>(find(*editor,"uiZoom"));

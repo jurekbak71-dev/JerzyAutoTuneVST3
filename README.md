@@ -1,4 +1,4 @@
-# Jerzy Vocal Studio 3.0 / JERZY AUTO TUNE VST3
+# Jerzy Vocal Studio 3.0.1 / JERZY AUTO TUNE VST3
 
 Native Windows 10/11 x64 vocal processor, extended from JerzyAutoTuneVST3 rather than replaced. The host-visible name remains **JERZY AUTO TUNE** and the original VST identity and 68 existing parameter IDs are retained. The Steel Studio interface exposes 143 automated parameters across Tune, Clean, Dynamics, Tone, Space, Harmony and Voice.
 
@@ -41,4 +41,8 @@ cmake --build build --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSP
 xvfb-run -a ctest --test-dir build --output-on-failure
 ```
 
-Regression coverage includes 95 detector/limiter cases, 19 studio audio cases, all 143 parameter bindings, scaling, hit targets, state recall and native section screenshots. See [research](docs/RESEARCH-3.0.md), [original audit](docs/AUDIT-1.5.md), [pitch DSP](docs/DSP-2.0.md) and [third-party notices](docs/THIRD-PARTY-NOTICES.md).
+Regression coverage includes 95 detector/limiter cases, 20 studio audio cases, all 143 parameter bindings, scaling, hit targets, state recall and native section screenshots. See [research](docs/RESEARCH-3.0.md), [original audit](docs/AUDIT-1.5.md), [pitch DSP](docs/DSP-2.0.md) and [third-party notices](docs/THIRD-PARTY-NOTICES.md).
+
+## Steel Studio GUI update (3.0.1 RC2)
+
+The native interface now follows the selected hardware layout: multi-layer metal frame, icon navigation, separate current-note card, large inspector knobs, input/processed amplitude histories, readable dBFS meters and larger primary effect controls. Barlow and Barlow Condensed fonts are embedded for consistent rendering on Windows. All parameter bindings and DSP remain intact. Advanced settings remain in ALL CONTROLS. Native screenshots in the release are driven by a synthetic audio test signal.

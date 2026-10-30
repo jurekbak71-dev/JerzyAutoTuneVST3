@@ -9,6 +9,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void showPage(int index, bool allControls = false);
+    void refreshDisplay() { timerCallback(); }
 private:
     struct StudioLookAndFeel final : juce::LookAndFeel_V4
     {
@@ -16,6 +17,7 @@ private:
         void drawRotarySlider(juce::Graphics&,int,int,int,int,float,float,float,juce::Slider&) override;
         void drawToggleButton(juce::Graphics&,juce::ToggleButton&,bool,bool) override;
         void drawButtonBackground(juce::Graphics&,juce::Button&,const juce::Colour&,bool,bool) override;
+        void drawButtonText(juce::Graphics&,juce::TextButton&,bool,bool) override;
         juce::Font getTextButtonFont(juce::TextButton&,int) override;
         juce::Font getComboBoxFont(juce::ComboBox&) override;
         juce::Font getLabelFont(juce::Label&) override;
@@ -54,7 +56,7 @@ private:
     juce::dsp::FFT fft {11};
     std::array<float,2048> input {},output {};
     std::array<float,1025> spectrum {},processedSpectrum {};
-    std::array<float,260> pitchHistory {},targetHistory {},reductionHistory {},stageBHistory {};
+    std::array<float,260> pitchHistory {},targetHistory {},reductionHistory {},stageBHistory {},waveHistory {},wavePeakHistory {};
     size_t historyWrite=0;
     float inputDb=-60,outputDb=-60;
     int page=0,dragBand=-1;

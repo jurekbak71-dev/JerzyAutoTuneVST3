@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(JerzyAutoTune VERSION 3.0.0)
+project(JerzyAutoTune VERSION 3.0.1)
 
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -26,7 +26,13 @@ juce_add_plugin(JerzyAutoTune
     NEEDS_MIDI_INPUT TRUE
     PRODUCT_NAME "JERZY AUTO TUNE")
 
-juce_add_binary_data(JerzyStudioAssets SOURCES Source/Assets/steel_texture.png)
+juce_add_binary_data(JerzyStudioAssets SOURCES
+    Source/Assets/steel_texture.png
+    Source/Assets/Fonts/Labels.ttf Source/Assets/Fonts/Values.ttf
+    Source/Assets/Icons/activity.svg Source/Assets/Icons/bar-chart-2.svg
+    Source/Assets/Icons/sliders.svg Source/Assets/Icons/box.svg
+    Source/Assets/Icons/users.svg Source/Assets/Icons/mic.svg
+    Source/Assets/Icons/volume-2.svg Source/Assets/Icons/power.svg)
 juce_generate_juce_header(JerzyAutoTune)
 target_sources(JerzyAutoTune PRIVATE
     Source/PluginEditor.cpp

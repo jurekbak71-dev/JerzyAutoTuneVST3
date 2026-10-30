@@ -35,7 +35,7 @@ jobs:
         run: |
           $plugin = 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3'
           $module = Get-Content "$plugin/Contents/Resources/moduleinfo.json" -Raw
-          if ($module -notmatch '"Version":\s*"3\.0\.0"') { throw 'Wrong VST3 module version' }
+          if ($module -notmatch '"Version":\s*"3\.0\.1"') { throw 'Wrong VST3 module version' }
           $bytes = [IO.File]::ReadAllBytes("$plugin/Contents/x86_64-win/JERZY AUTO TUNE.vst3")
           if ($bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Windows PE binary missing' }
           $pe = [BitConverter]::ToInt32($bytes,60)
@@ -62,17 +62,23 @@ jobs:
           $iscc = 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
           if (!(Test-Path $iscc)) { throw 'Inno Setup compiler not installed on runner' }
           $plugin = (Resolve-Path 'build/JerzyAutoTune_artefacts/Release/VST3/JERZY AUTO TUNE.vst3').Path
-          & $iscc "/DPluginDir=$plugin" '/DMyAppVersion=3.0.0' installer/JerzyVocalStudio.iss 2>&1 | Tee-Object installer.log
+          & $iscc "/DPluginDir=$plugin" '/DMyAppVersion=3.0.1' installer/JerzyVocalStudio.iss 2>&1 | Tee-Object installer.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-FileHash dist/*Setup.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content dist/SHA256.txt
       - name: Test installer and installed plugin
         shell: pwsh
         run: |
+          Invoke-WebRequest 'https://github.com/jurekbak71-dev/JerzyAutoTuneVST3/releases/download/v3.0.0-rc1/JerzyVocalStudio-3.0.0-Windows-x64-Setup.exe' -OutFile previous-setup.exe
+          if ((Get-FileHash previous-setup.exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1a43e6016ca7005675ac35818cb7aeb8af0586175c5d2a73d7f00375f19fb1f7') { throw 'Previous installer checksum mismatch' }
+          $previous = Start-Process (Resolve-Path previous-setup.exe).Path -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait -PassThru
+          if ($previous.ExitCode -ne 0) { throw 'Previous release installation failed' }
           $setup = (Get-ChildItem dist/*Setup.exe | Select-Object -First 1).FullName
           $install = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/LOG=install-smoke.log' -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
           $installed = 'C:/Program Files/Common Files/VST3/JERZY AUTO TUNE.vst3'
           if (!(Test-Path "$installed/Contents/x86_64-win/JERZY AUTO TUNE.vst3")) { throw 'Installed VST3 missing' }
+          $installedMetadata = Get-Content "$installed/Contents/Resources/moduleinfo.json" -Raw
+          if ($installedMetadata -notmatch '"Version":\s*"3\.0\.1"') { throw 'Upgrade retained the old plugin' }
           $validator = Get-ChildItem pluginval -Recurse -Filter pluginval.exe | Select-Object -First 1
           & $validator.FullName --strictness-level 5 --random-seed 71 --timeout-ms 180000 --output-dir installed-validation --validate $installed 2>&1 | Tee-Object installed-pluginval.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -96,7 +102,7 @@ jobs:
           retention-days: 90
       - uses: actions/upload-artifact@v4
         with:
-          name: JerzyVocalStudio-3.0.0-Windows-x64-Installer
+          name: JerzyVocalStudio-3.0.1-Windows-x64-Installer
           path: |
             dist/*Setup.exe
             dist/SHA256.txt
@@ -107,15 +113,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'v3.0.0-rc1'
+          Copy-Item build/gui-previews/studio-0-focus.png dist/JerzyVocalStudio-3.0.1-Tune.png
+          Compress-Archive -Path build/gui-previews/studio-*.png -DestinationPath dist/JerzyVocalStudio-3.0.1-GUI.zip
+          $tag = 'v3.0.1-rc2'
           $notes = @'
-          Native Windows x64 VST3 installer: Vocal Studio DSP suite and Steel Studio UI.
+          Native Windows x64 VST3 installer with rebuilt Steel Studio UI: metallic chassis, icon navigation, large knobs, embedded Barlow fonts, brighter labels and live signal displays.
+          GUI screenshots are real native Windows captures driven by a synthetic audio test signal, not design mockups.
           Automated native audio/GUI tests, pluginval strictness 5, installation, installed-plugin validation and uninstallation completed in this workflow before publication.
           Close your DAW before installation and rescan VST3 plugins. Host-visible name: JERZY AUTO TUNE. Back up projects before replacing an earlier version.
           FL Studio listening and saved-project recall require manual verification; this is a release candidate. Unsigned installer; no code-signing certificate is configured.
           '@
           $notes | Set-Content release-notes.txt -Encoding utf8
-          gh release create $tag dist/*Setup.exe dist/SHA256.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'Jerzy Vocal Studio 3.0 RC1 — Windows x64 VST3' --notes-file release-notes.txt
+          gh release create $tag dist/*Setup.exe dist/SHA256.txt dist/*Tune.png dist/*GUI.zip --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'Jerzy Vocal Studio 3.0.1 RC2 — Windows x64 VST3' --notes-file release-notes.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish diagnostic report
         if: always()

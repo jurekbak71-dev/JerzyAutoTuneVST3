@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-#define MyAppVersion "3.0.0"
+#define MyAppVersion "3.0.1"
 #endif
 #ifndef PluginDir
 #define PluginDir "..\build\JerzyAutoTune_artefacts\Release\VST3\JERZY AUTO TUNE.vst3"

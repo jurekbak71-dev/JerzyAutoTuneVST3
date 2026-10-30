@@ -38,6 +38,10 @@ void runStudioTests()
 {
     using namespace jerzy::studio;
     int cases=0;
+    {
+        const float below=Compressor::gainReduction(std::nextafter(3.f,0.f),3,6),at=Compressor::gainReduction(3,3,6),above=Compressor::gainReduction(std::nextafter(3.f,4.f),3,6);
+        check(std::abs(at-2.f)<1.e-5f&&std::abs(at-below)<1.e-5f&&std::abs(above-at)<1.e-5f,"Soft knee has a discontinuity at its upper boundary");++cases;
+    }
     for(double fs:{44100.,48000.,96000.,192000.})
     {
         auto prep=std::make_unique<SpectralPrep>();prep->prepare(fs);prep->settings.voice=true;

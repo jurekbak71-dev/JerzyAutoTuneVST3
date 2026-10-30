@@ -181,6 +181,12 @@ struct Compressor
         hp=std::exp(-2*pi*std::clamp(settings.sidechain,0.f,600.f)/float(fs));
         dcCoeff=std::exp(-2*pi*12.f/float(fs)); makeup=db(settings.makeup);
     }
+    static float gainReduction(float over,float ratio,float knee) noexcept
+    {
+        const float slope=1.f-1.f/std::max(1.f,ratio);
+        if(knee>.001f&&over>-knee*.5f&&over<knee*.5f)return slope*(over+knee*.5f)*(over+knee*.5f)/(2*knee);
+        return over>=knee*.5f?slope*over:0.f;
+    }
     void process(float& left,float& right,float wet) noexcept
     {
         float peak=0;
@@ -201,9 +207,7 @@ struct Compressor
         else { const float c=peak>envelope?attack:release; envelope=c*envelope+(1-c)*peak; peak=envelope; }
         const float over=20*std::log10(std::max(peak,1.e-8f))-settings.threshold;
         const float knee=std::max(settings.knee,settings.style>=2?8.f:0.f);
-        float gr=0;
-        if(knee>.001f && over>-knee*.5f && over<knee*.5f) gr=(1-1/std::max(1.f,settings.ratio))*(over+knee*.5f)*(over+knee*.5f)/(2*knee);
-        else if(over>knee*.5f) gr=(1-1/std::max(1.f,settings.ratio))*over;
+        const float gr=gainReduction(over,settings.ratio,knee);
         reduction=std::max(0.f,gr)*wet;
         const float factor=1+(db(-gr)*makeup-1)*wet;
         left*=factor; right*=factor;
