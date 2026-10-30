@@ -99,7 +99,12 @@ void runStudioTests()
         Space delay;delay.settings.delay=true;delay.settings.delayMix=50;delay.settings.duck=0;delay.settings.feedback=50;delay.prepare(48000);delay.configure(120);
         float firstL=0,firstR=0,secondR=0;
         for(int i=0;i<25000;++i){float l=i==0?1.f:0,r=0;delay.process(l,r);if(i==12000){firstL=l;firstR=r;}if(i==24000)secondR=r;}
-        check(firstL>.4f&&std::abs(firstR)<1.e-7f&&secondR>.01f,"Tempo-synced ping-pong delay routing/time incorrect");++cases;
+        check(firstL>.24f&&std::abs(firstR)<1.e-7f&&secondR>.01f,"Tempo-synced ping-pong delay routing/time incorrect");++cases;
+    }
+    {
+        Space delay;delay.settings.delay=true;delay.settings.delayMix=100;delay.settings.duck=0;delay.prepare(48000);delay.configure(120);float echo=0;
+        for(int i=0;i<=12000;++i){float l=0,r=i==0?1.f:0;delay.process(l,r);if(i==12000)echo=l;}
+        check(echo>.49f,"Ping-pong drops right-only source");++cases;
     }
     {
         std::vector<float> four,thirtyTwo;

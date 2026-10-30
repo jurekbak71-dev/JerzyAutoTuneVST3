@@ -228,7 +228,7 @@ public:
     struct Settings { bool reverb=false,delay=false,ping=true,sync=true; int type=0,division=1; float decay=1.8f,preDelay=40,damping=45,width=100,reverbMix=18,duck=6,delayMs=250,feedback=25,delayMix=12; } settings;
     void prepare(double rate)
     {
-        fs=rate;position=0;duckEnvelope=0;revFade=delFade=0;hpState={};lpState={};delayLow={};
+        fs=rate;position=0;echoLength=1;duckEnvelope=0;revFade=delFade=0;hpState={};lpState={};delayLow={};
         for(auto& b:echo)b.assign(size_t(fs*6)+8,0);
         for(auto& b:pre)b.assign(size_t(fs*.26)+8,0);
         for(auto& line:lines){line.assign(size_t(fs*.24)+8,0);}
@@ -282,7 +282,7 @@ public:
         const float dl=readDelay(echo[0],position,echoLength),dr=readDelay(echo[1],position,echoLength);
         const float f=std::clamp(settings.feedback*.01f,0.f,.75f);
         delayLow[0]+=.35f*((settings.ping?dr:dl)-delayLow[0]);delayLow[1]+=.35f*((settings.ping?dl:dr)-delayLow[1]);
-        echo[0][position]=in[0]+f*delayLow[0];echo[1][position]=(settings.ping?0.f:in[1])+f*delayLow[1];
+        echo[0][position]=(settings.ping?.5f*(in[0]+in[1]):in[0])+f*delayLow[0];echo[1][position]=(settings.ping?0.f:in[1])+f*delayLow[1];
         left+=dl*delFade*settings.delayMix*.01f*duckGain;right+=dr*delFade*settings.delayMix*.01f*duckGain;
         position=(position+1)%echo[0].size();
     }

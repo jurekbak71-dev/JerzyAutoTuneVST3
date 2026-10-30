@@ -41,4 +41,4 @@ cmake --build build --target JerzyAutoTune_VST3 JerzyAutoTuneTests JerzyVocalDSP
 xvfb-run -a ctest --test-dir build --output-on-failure
 ```
 
-Regression coverage includes 95 detector/limiter cases, 17 studio audio cases, all 143 parameter bindings, scaling, hit targets, state recall and native section screenshots. See [research](docs/RESEARCH-3.0.md), [original audit](docs/AUDIT-1.5.md), [pitch DSP](docs/DSP-2.0.md) and [third-party notices](docs/THIRD-PARTY-NOTICES.md).
+Regression coverage includes 95 detector/limiter cases, 19 studio audio cases, all 143 parameter bindings, scaling, hit targets, state recall and native section screenshots. See [research](docs/RESEARCH-3.0.md), [original audit](docs/AUDIT-1.5.md), [pitch DSP](docs/DSP-2.0.md) and [third-party notices](docs/THIRD-PARTY-NOTICES.md).
