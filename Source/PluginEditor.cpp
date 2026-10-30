@@ -23,9 +23,10 @@ void hardwarePanel(juce::Graphics& g,juce::Rectangle<float> r,bool metallic=fals
 }
 void navIcon(juce::Graphics& g,int page,juce::Rectangle<float> r)
 {
-    static const std::array<const char*,7> names{{"activity_svg","bar_chart_2_svg","activity_svg","sliders_svg","box_svg","users_svg","mic_svg"}};
+    static const std::array<const char*,7> data{{BinaryData::activity_svg,BinaryData::barchart2_svg,BinaryData::activity_svg,BinaryData::sliders_svg,BinaryData::box_svg,BinaryData::users_svg,BinaryData::mic_svg}};
+    static const std::array<int,7> sizes{{BinaryData::activity_svgSize,BinaryData::barchart2_svgSize,BinaryData::activity_svgSize,BinaryData::sliders_svgSize,BinaryData::box_svgSize,BinaryData::users_svgSize,BinaryData::mic_svgSize}};
     static std::array<std::unique_ptr<juce::Drawable>,7> icons;
-    if(!icons[size_t(page)]){int size=0;const auto* data=BinaryData::getNamedResource(names[size_t(page)],size);icons[size_t(page)]=juce::Drawable::createFromImageData(data,size_t(size));}
+    if(!icons[size_t(page)])icons[size_t(page)]=juce::Drawable::createFromImageData(data[size_t(page)],size_t(sizes[size_t(page)]));
     if(icons[size_t(page)])icons[size_t(page)]->drawWithin(g,r,juce::RectanglePlacement::centred,1);
 }
 void text(juce::Graphics& g,const juce::String& value,juce::Rectangle<float> r,float size=14,juce::Colour c=white,juce::Justification align=juce::Justification::centredLeft)
