@@ -63,7 +63,9 @@ void capture(juce::Component& editor, const juce::String& name)
 {
     const auto folder = juce::File::getCurrentWorkingDirectory().getChildFile("gui-previews");
     folder.createDirectory();
-    auto stream = folder.getChildFile(name + ".png").createOutputStream();
+    const auto imageFile=folder.getChildFile(name + ".png");
+    imageFile.deleteFile();
+    auto stream = imageFile.createOutputStream();
     require(stream != nullptr, "Cannot write GUI preview");
     juce::PNGImageFormat png;
     require(png.writeImageToStream(editor.createComponentSnapshot(editor.getLocalBounds()), *stream), "Cannot render GUI");

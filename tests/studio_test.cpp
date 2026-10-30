@@ -135,5 +135,15 @@ void runStudioTests()
         }
         check(peak==p.getLatencySamples(),"Master bypass is not latency aligned");++cases;
     }
+    {
+        JerzyAutoTuneAudioProcessor p;dry(p);p.prepareToPlay(48000,128);p.learnNoise();
+        juce::AudioBuffer<float> b(2,128);juce::MidiBuffer midi;std::mt19937 rng(71);std::normal_distribution<float> noise(0,.02f);
+        for(int block=0;block<400;++block){for(int i=0;i<128;++i){const float x=noise(rng);b.setSample(0,i,x);b.setSample(1,i,x);}p.processBlock(b,midi);}
+        check(p.hasNoiseProfile(),"Processor noise learning did not complete");
+        juce::MemoryBlock state;p.getStateInformation(state);JerzyAutoTuneAudioProcessor restored;restored.setStateInformation(state.getData(),int(state.getSize()));
+        check(restored.hasNoiseProfile(),"Saved noise profile was not restored");
+        auto tree=restored.parameters.copyState();tree.setProperty("noiseProfile","invalid",nullptr);auto xml=tree.createXml();juce::MemoryBlock invalid;juce::AudioProcessor::copyXmlToBinary(*xml,invalid);
+        restored.setStateInformation(invalid.getData(),int(invalid.getSize()));check(!restored.hasNoiseProfile(),"Malformed profile retained stale learned noise");++cases;
+    }
     std::cout<<"PASS: "<<cases<<" studio audio regressions (WOLA, learned noise, dynamics, sibilance, reverb, delay, choir, harmony, MIDI, key, master bypass)\n";
 }

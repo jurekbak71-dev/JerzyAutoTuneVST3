@@ -969,13 +969,14 @@ void JerzyAutoTuneAudioProcessor::setStateInformation(const void* data, int size
                 }
             }
             juce::MemoryBlock profile;
+            bool validProfile=false;
             if(profile.fromBase64Encoding(state.getProperty("noiseProfile").toString())&&profile.getSize()==size_t(jerzy::studio::SpectralPrep::bins)*sizeof(float))
             {
                 bool valid=true;const auto* data=static_cast<const float*>(profile.getData());
                 for(int k=0;k<jerzy::studio::SpectralPrep::bins;++k)valid=valid&&std::isfinite(data[k])&&data[k]>=0;
-                if(valid){for(int k=0;k<jerzy::studio::SpectralPrep::bins;++k)spectralPrep->savedProfile[size_t(k)].store(data[k]);spectralPrep->profileRate.store(double(state.getProperty("noiseProfileRate",48000)));spectralPrep->restoreProfile.store(true);spectralPrep->profileReady.store(true);}
+                if(valid){validProfile=true;for(int k=0;k<jerzy::studio::SpectralPrep::bins;++k)spectralPrep->savedProfile[size_t(k)].store(data[k]);spectralPrep->profileRate.store(double(state.getProperty("noiseProfileRate",48000)));spectralPrep->restoreProfile.store(true);spectralPrep->profileReady.store(true);}
             }
-            if(!state.hasProperty("noiseProfile"))
+            if(!validProfile)
             {
                 for(auto& bin:spectralPrep->savedProfile)bin.store(0);spectralPrep->profileReady.store(false);spectralPrep->profileRate.store(0);spectralPrep->restoreProfile.store(true);
             }

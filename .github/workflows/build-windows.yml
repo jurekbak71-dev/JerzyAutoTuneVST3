@@ -102,6 +102,21 @@ jobs:
             dist/SHA256.txt
           if-no-files-found: error
           retention-days: 90
+      - name: Publish tested installer download
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v3.0.0-rc1'
+          $notes = @'
+          Native Windows x64 VST3 installer: Vocal Studio DSP suite and Steel Studio UI.
+          Automated native audio/GUI tests, pluginval strictness 5, installation, installed-plugin validation and uninstallation completed in this workflow before publication.
+          Close your DAW before installation and rescan VST3 plugins. Host-visible name: JERZY AUTO TUNE. Back up projects before replacing an earlier version.
+          FL Studio listening and saved-project recall require manual verification; this is a release candidate. Unsigned installer; no code-signing certificate is configured.
+          '@
+          $notes | Set-Content release-notes.txt -Encoding utf8
+          gh release create $tag dist/*Setup.exe dist/SHA256.txt --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'Jerzy Vocal Studio 3.0 RC1 — Windows x64 VST3' --notes-file release-notes.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish diagnostic report
         if: always()
         shell: pwsh
