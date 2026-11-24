@@ -109,6 +109,10 @@ private:
     juce::SmoothedValue<float> harmonyFade, stageBFade, masterFade;
     juce::AudioBuffer<float> masterDelay;
     int masterWrite=0, masterRingLength=1;
+    // Sleep the expensive DSP graph only after master bypass has faded to zero.
+    // Wake in dry-only mode until the lookahead/pitch engine is re-primed.
+    bool masterAsleep=false;
+    int masterRewarm=0;
     std::array<float,2> hardLow {}, hardHigh {}, hardEnvelope {}, satPrevious {}, satDc {};
     std::array<jerzy::AntialiasedTanh,2> saturator{};
     jerzy::PitchTracker pitchTracker;
