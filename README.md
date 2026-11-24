@@ -22,7 +22,7 @@ The `fix/autotune-301-dsp-audit-20261124` branch adds first-order antiderivative
 
 The 4x FIR intersample-aware output limiter retains the original 3-ms audio delay and the existing VST3 latency declaration. Its sample-peak and adversarial intersample test cases must pass on the native Windows CI before merge; test coverage cannot establish a mathematical guarantee for all future waveforms.
 
-Once the master bypass crossfade reaches fully dry, the plugin now has a CPU-saving path that maintains the latency-aligned dry ring, peak meters and audio visualizers while skipping the expensive pitch and effects graph. Re-enabling processing primes the graph from incoming audio before fading wet back in. This is intended to prevent a transient dropout, but real FL Studio testing is required before release.
+Once the master bypass crossfade reaches fully dry, the plugin now has a CPU-saving path that maintains the latency-aligned dry ring, peak meters and audio visualizers while skipping the expensive pitch and effects graph. MIDI Note On/Off, sustain pedal and all-notes-off events are still processed by a lightweight note latch while the audio DSP sleeps; waking cannot resurrect notes already released during bypass. Re-enabling processing primes the graph from incoming audio before fading wet back in. This is intended to prevent a transient dropout, but real FL Studio testing is required before release.
 
 No VST3 parameter IDs, factory program identities or plugin IDs are changed. Do not merge the Draft PR or publish a production release solely because one CI run passes.
 
