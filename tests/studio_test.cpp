@@ -41,6 +41,60 @@ void runStudioTests()
     using namespace jerzy::studio;
     int cases=0;
     {
+        // Integration: a note received during master DSP sleep must be held
+        // when audio resumes, as if it arrived at the first waking block.
+        JerzyAutoTuneAudioProcessor sleeping,reference;
+        for(auto* p:{&sleeping,&reference})
+        {
+            dry(*p);
+            set(*p,"masterEnabled",0);
+            set(*p,"harmonyEnabled",1);
+            set(*p,"harmonyMode",2);
+            set(*p,"harmonyMix",100);
+            set(*p,"harmony1Enabled",1);
+            set(*p,"harmony1Level",-6);
+            for(int v=2;v<=4;++v)
+            {
+                const auto id="harmony"+juce::String(v)+"Enabled";
+                set(*p,id.toRawUTF8(),0);
+            }
+            p->prepareToPlay(48000,128);
+        }
+        juce::AudioBuffer<float> a(2,128),b(2,128);
+        juce::MidiBuffer asleepEvents,awakeEvents;
+        double delta=0,power=0;
+        for(int block=0;block<420;++block)
+        {
+            if(block==140)
+            {
+                set(sleeping,"masterEnabled",1);
+                set(reference,"masterEnabled",1);
+            }
+            asleepEvents.clear();awakeEvents.clear();
+            if(block==10)asleepEvents.addEvent(
+                juce::MidiMessage::noteOn(1,64,juce::uint8(100)),0);
+            if(block==140)awakeEvents.addEvent(
+                juce::MidiMessage::noteOn(1,64,juce::uint8(100)),0);
+            for(int i=0;i<128;++i)
+            {
+                const float sample=.2f*std::sin(float(block*128+i)*.0287979f);
+                for(int ch=0;ch<2;++ch){a.setSample(ch,i,sample);b.setSample(ch,i,sample);}
+            }
+            sleeping.processBlock(a,asleepEvents);
+            reference.processBlock(b,awakeEvents);
+            if(block>=350)
+                for(int i=0;i<128;++i)
+                {
+                    const double x=a.getSample(0,i),y=b.getSample(0,i);
+                    delta+=(x-y)*(x-y);
+                    power+=y*y;
+                }
+        }
+        check(power>1.e-4 && delta/(power+1.e-12)<1.e-5,
+              "MIDI note received during DSP sleep is missing after wake");
+        ++cases;
+    }
+    {
         // Notes and sustain change even while the CPU-heavy master DSP sleeps.
         MidiLatch latch;
         const auto on=juce::MidiMessage::noteOn(1,65,juce::uint8(100));
