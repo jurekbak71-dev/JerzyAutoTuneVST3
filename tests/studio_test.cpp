@@ -74,6 +74,34 @@ void runStudioTests()
         ++cases;
     }
     {
+        // A vocal hard-panned right should still drive the analyzer rather
+        // than displaying an empty left-channel spectrum.
+        JerzyAutoTuneAudioProcessor p;
+        dry(p);set(p,"masterEnabled",0);
+        p.prepareToPlay(48000,128);
+        juce::AudioBuffer<float> block(2,128);juce::MidiBuffer midi;
+        for(int n=0;n<120;++n)
+        {
+            for(int i=0;i<128;++i)
+            {
+                block.setSample(0,i,0.f);
+                block.setSample(1,i,.4f*std::sin(float(n*128+i)*.019f));
+            }
+            p.processBlock(block,midi);
+        }
+        std::array<float,2048> in{},out{};
+        p.copyAnalysis(in,out);
+        float peak=0,error=0;
+        for(size_t i=0;i<in.size();++i)
+        {
+            peak=std::max(peak,std::abs(in[i]));
+            error=std::max(error,std::abs(in[i]-out[i]));
+        }
+        check(peak>.25f && error<1.e-6f,
+              "Right-channel vocal is invisible or not latency-aligned in the spectrum");
+        ++cases;
+    }
+    {
         // Prove that the output FFT reads sound AFTER saturation, and not the
         // old spectral-prep intermediate that used to be mislabeled as OUT.
         JerzyAutoTuneAudioProcessor p;
