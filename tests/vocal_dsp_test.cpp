@@ -91,6 +91,61 @@ int main()
                 ++checks;
             }
         }
+        // Independent 8x/32-tap reconstruction of the LIMITED waveform,
+        // not the detector's internal 4x/16-tap estimate. This tests
+        // intersample overshoots on multitone and high-frequency content.
+        {
+            constexpr int oversampling=8,filterTaps=32,centre=16;
+            constexpr double fs=48000.,ceiling=.7;
+            std::array<std::array<double,filterTaps>,oversampling> reference{};
+            for(int p=0;p<oversampling;++p)
+            {
+                double sum=0;
+                for(int k=0;k<filterTaps;++k)
+                {
+                    const double distance=double(k-centre)+double(p)/oversampling;
+                    const double sinc=std::abs(distance)<1.e-9?1.0:std::sin(pi*distance)/(pi*distance);
+                    const double window=.42-.5*std::cos(2*pi*k/(filterTaps-1))
+                                            +.08*std::cos(4*pi*k/(filterTaps-1));
+                    reference[p][k]=sinc*window;sum+=reference[p][k];
+                }
+                for(auto& coefficient:reference[p])coefficient/=sum;
+            }
+            for(int kind=0;kind<5;++kind)
+            {
+                jerzy::OutputLimiter limiter;
+                limiter.prepare(fs);
+                std::array<std::vector<float>,2> output;
+                for(auto& ch:output)ch.reserve(12000);
+                for(int n=0;n<12000;++n)
+                {
+                    const double t=double(n),phase=.7853981633974483;
+                    const double l=kind==0?.95*std::sin(2*pi*.25*t+phase)
+                        :kind==1?1.3*std::sin(2*pi*.20*t+.33)
+                        :kind==2?1.3*std::sin(2*pi*.33*t+.33)
+                        :kind==3?1.3*std::sin(2*pi*.45*t+.33)
+                                :.6*std::sin(2*pi*.20*t)+.6*std::sin(2*pi*.37*t+.7);
+                    const double r=kind==0?-.5*l:.85*std::sin(2*pi*.29*t+.24);
+                    float left=float(l),right=float(r);
+                    limiter.process(left,right,float(ceiling),true);
+                    check(std::isfinite(left)&&std::isfinite(right),"Nonfinite output in independent true-peak test");
+                    output[0].push_back(left);output[1].push_back(right);
+                }
+                double reconstructed=0;
+                for(int n=2500;n<11500;n+=2)
+                    for(int p=0;p<oversampling;++p)
+                        for(int ch=0;ch<2;++ch)
+                        {
+                            double y=0;
+                            for(int k=0;k<filterTaps;++k)
+                                y+=reference[p][k]*output[ch][size_t(n-k)];
+                            reconstructed=std::max(reconstructed,std::abs(y));
+                        }
+                check(reconstructed<ceiling*1.025,
+                      "8x independent true-peak reconstruction exceeds ceiling tolerance");
+                ++checks;
+            }
+        }
         // Compare ADAA against the previous direct tanh at a frequency
         // whose third harmonic folds from 30 kHz down to 18 kHz at 48 kHz.
         for(float bias : {0.f,.15f,.38f})
