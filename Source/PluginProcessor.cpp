@@ -251,6 +251,7 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
     setLatencySamples(latency + finalLimiter.latency() + spectralPrep->latency());
     masterRingLength=getLatencySamples()+262144;
     masterDelay.setSize(channels,masterRingLength); masterDelay.clear();masterWrite=0;
+    masterAsleep=false;masterRewarm=0;
     dryDelayLength = latency + maximumBlockSize + 1;
     dryDelayBuffer.setSize(channels, dryDelayLength, false, true, true);
     dryDelayBuffer.clear();
@@ -728,7 +729,64 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
     const int channels = juce::jmin(buffer.getNumChannels(), stretchedBuffer.getNumChannels());
     const int samples = buffer.getNumSamples();
+    if(channels<=0 || samples<=0)return;
 
+    const bool masterRequested=parameters.getRawParameterValue("masterEnabled")->load()>=.5f;
+    // Once the smoothed master crossfade has reached fully DRY, maintain only
+    // the PDC-aligned input delay, signal tap and meters. The pitch estimator,
+    // spectral transform, stretchers and effect graph consume no CPU here.
+    if(!masterRequested && !masterFade.isSmoothing()
+       && masterFade.getCurrentValue()<=1.e-6f)
+    {
+        masterAsleep=true;
+        float inMax=0.f,outMax=0.f;
+        for(int i=0;i<samples;++i)
+        {
+            const int read=(masterWrite-getLatencySamples()+masterRingLength)%masterRingLength;
+            float input[2]={},output[2]={};
+            for(int ch=0;ch<channels;++ch)
+            {
+                const float raw=buffer.getSample(ch,i);
+                input[ch]=std::isfinite(raw)?juce::jlimit(-32.f,32.f,raw):0.f;
+                masterDelay.setSample(ch,masterWrite,input[ch]);
+                inMax=juce::jmax(inMax,std::abs(input[ch]));
+            }
+            for(int ch=0;ch<channels;++ch)
+            {
+                output[ch]=masterDelay.getSample(ch,read);
+                buffer.setSample(ch,i,output[ch]);
+                outMax=juce::jmax(outMax,std::abs(output[ch]));
+            }
+            const int tapChannel=channels==2 && std::abs(input[1])>std::abs(input[0])?1:0;
+            analysis.push(output[tapChannel],output[tapChannel]);
+            masterWrite=(masterWrite+1)%masterRingLength;
+        }
+        analysis.publish();
+        if(inMax>=1.f)inputOverload.store(juce::jmax(inputOverload.load(),inMax));
+        if(outMax>=1.f)outputOverload.store(juce::jmax(outputOverload.load(),outMax));
+        const auto record=[](std::atomic<float>& meter,float value) noexcept {
+            float old=meter.load(std::memory_order_relaxed);
+            while(old<value && !meter.compare_exchange_weak(old,value,std::memory_order_relaxed)) {}
+        };
+        record(inputMeterPeak,inMax);record(outputMeterPeak,outMax);
+        inputPeak.store(inMax,std::memory_order_relaxed);
+        outputPeak.store(outMax,std::memory_order_relaxed);
+        compressorReduction.store(0.f,std::memory_order_relaxed);
+        stageBReduction.store(0.f,std::memory_order_relaxed);
+        displayPitch.store(-1.f,std::memory_order_relaxed);
+        displayCorrection.store(0.f,std::memory_order_relaxed);
+        displayTarget.store(-1.f,std::memory_order_relaxed);
+        displayConfidence.store(0.f,std::memory_order_relaxed);
+        return;
+    }
+    if(masterRequested && masterAsleep)
+    {
+        masterAsleep=false;
+        // Keep wet closed until the frozen spectral/pitch state has been
+        // completely replaced with recent input. No allocation or reset.
+        masterRewarm=juce::jmax(getLatencySamples()+4096,int(currentSampleRate*.08));
+        masterFade.setCurrentAndTargetValue(0.f);
+    }
     advanced=parameters.getRawParameterValue("engineMode")->load()>=.5f;
     if(!advanced) displayConfidence.store(0,std::memory_order_relaxed);
     if(auto* head=getPlayHead())if(auto position=head->getPosition())if(auto bpm=position->getBpm())tempo.store(*bpm);
@@ -924,7 +982,9 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     processVocalChain(buffer);
 
-    masterFade.setTargetValue(value("masterEnabled"));
+    const bool warming=masterRequested && masterRewarm>0;
+    masterFade.setTargetValue(masterRequested&&!warming?1.f:0.f);
+    if(warming)masterRewarm=juce::jmax(0,masterRewarm-samples);
     float blockOutputPeak=0;
     for(int i=0;i<samples;++i)
     {
