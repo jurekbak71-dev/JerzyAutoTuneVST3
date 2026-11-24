@@ -72,7 +72,7 @@ int main()
             double outputEnergy=0;
             for(int i=0;i<total;++i)
             {
-                const float x=amplitude*std::sin(float(2*pi*10000*i/fs));
+                const float x=amplitude*static_cast<float>(std::sin(2*pi*10000.0*double(i)/fs));
                 const float direct=std::tanh(drive*x+bias);
                 const float filtered=shaper.process(x,drive,bias);
                 check(std::isfinite(filtered),"Nonfinite ADAA sample");
