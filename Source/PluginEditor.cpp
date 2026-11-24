@@ -593,7 +593,16 @@ void JerzyAutoTuneAudioProcessorEditor::timerCallback()
         navigation[size_t(i)].getProperties().set("moduleState",processor.parameters.getRawParameterValue(pagePower[i])->load()>.5f);
     undo.setEnabled(processor.undoManager.canUndo());
     applyKey.setEnabled(processor.getSuggestedKey()>=0);
-    surface.repaint();
+    // Preserve the static chassis and parameter controls; at 30 Hz only live
+    // plots, history, status LEDs and meters need to be redrawn.
+    surface.repaint(plotBounds().expanded(50.f,55.f).getSmallestIntegerContainer());
+    surface.repaint(1135,165,113,420);
+    surface.repaint(25,103,94,660);
+    if(page==0)
+    {
+        surface.repaint(850,156,253,91);  // current note and correction
+        surface.repaint(150,550,690,185); // RMS history and key suggestion
+    }
 }
 void JerzyAutoTuneAudioProcessorEditor::setReal(const char* id,float value)
 {
