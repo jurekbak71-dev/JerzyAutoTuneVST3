@@ -101,8 +101,8 @@ private:
     std::array<std::unique_ptr<signalsmith::stretch::SignalsmithStretch<float>>,4> harmonyEngines;
     std::array<juce::AudioBuffer<float>,4> harmonyOutput;
     std::array<std::array<std::atomic<float>*,5>,4> harmonyParameters {};
-    std::array<bool,128> heldMidi {}, sustainedMidi {};
-    bool sustainPedal=false, harmonyWasActive=false;
+    jerzy::studio::MidiLatch midiLatch;
+    bool harmonyWasActive=false;
     int harmonyWarm=0;
     uint64_t sampleClock=0;
     std::array<juce::SmoothedValue<float>,4> harmonyLevels;
