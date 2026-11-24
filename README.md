@@ -16,6 +16,17 @@ Native Windows 10/11 x64 vocal processor, extended from JerzyAutoTuneVST3 rather
 
 This is a **Studio-latency** processor; the host receives the actual latency. It does not promise low-latency live monitoring. The limiter bounds sample peaks, not intersample true peaks. Learned noise reduction and voice shaping are independently implemented DSP, not trained AI or a complete physical vocal-tract simulation. Key suggestion does not analyze polyphonic files or infer BPM; delay reads host tempo. Manual offline note editing is not implemented. Commercial-product equivalence is not asserted.
 
+## Native visualizers and honest signal paths
+
+- Tune history is a **measured** 30 Hz pitch/target timeline (about 8.7 seconds); it holds position when no new audio arrives. The pitch viewport pans slowly, not on every note transition.
+- Clean/Voice spectra compare the **latency-aligned dry input** and **actual final VST3 output after the complete chain and global bypass**, sampled over a 2048-sample Hann FFT window. The curves are smoothed for readability; no generated spectrum is presented as a measurement.
+- Tone shows the theoretical **EQ transfer function** on a separate ±18 dB gain scale. It is intentionally not overlaid on an incompatible 0 to -72 dB spectrum scale.
+- Dynamics shows the **modelled** compressor transfer functions separately from **measured** gain-reduction histories for each stage. The histories only advance when audio does.
+- Space displays a **modelled decay envelope**, not an impulse-response measurement. The caption states when the reverb is disabled.
+- Input/Output dBFS meters aggregate peaks across all host callbacks between GUI timer frames; overload latches until reset. The meters are sample-peak, **not** calibrated EBU/R128 or true-peak loudness meters.
+
+Native Windows screenshots in CI may use synthetic audio for deterministic regression. Such screenshots demonstrate the real renderer and DSP paths, but are not substitutes for live FL Studio measurements, listening and DPI qualification.
+
 ## Install
 
 Use the Windows x64 Setup executable produced by the Windows workflow. Close the DAW before installing; the bundle goes to `C:\Program Files\Common Files\VST3\JERZY AUTO TUNE.vst3`. Rescan plugins in FL Studio. Back up existing projects before replacing an older installed version. Legacy states select the original legacy pitch engine; new effect parameters receive safe defaults. Real FL Studio project recall and listening remain manual qualification tasks.
