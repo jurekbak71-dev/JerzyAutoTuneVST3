@@ -63,18 +63,25 @@ void runStudioTests()
         juce::AudioBuffer<float> a(2,128),b(2,128);
         juce::MidiBuffer asleepEvents,awakeEvents;
         double delta=0,power=0;
-        for(int block=0;block<420;++block)
+        for(int block=0;block<820;++block)
         {
-            if(block==140)
+            if(block==140 || block==560)
             {
                 set(sleeping,"masterEnabled",1);
                 set(reference,"masterEnabled",1);
+            }
+            if(block==420)
+            {
+                set(sleeping,"masterEnabled",0);
+                set(reference,"masterEnabled",0);
             }
             asleepEvents.clear();awakeEvents.clear();
             if(block==10)asleepEvents.addEvent(
                 juce::MidiMessage::noteOn(1,64,juce::uint8(100)),0);
             if(block==140)awakeEvents.addEvent(
                 juce::MidiMessage::noteOn(1,64,juce::uint8(100)),0);
+            if(block==500)asleepEvents.addEvent(juce::MidiMessage::noteOff(1,64),0);
+            if(block==560)awakeEvents.addEvent(juce::MidiMessage::noteOff(1,64),0);
             for(int i=0;i<128;++i)
             {
                 const float sample=.2f*std::sin(float(block*128+i)*.0287979f);
@@ -82,7 +89,7 @@ void runStudioTests()
             }
             sleeping.processBlock(a,asleepEvents);
             reference.processBlock(b,awakeEvents);
-            if(block>=350)
+            if((block>=350 && block<400)||block>=750)
                 for(int i=0;i<128;++i)
                 {
                     const double x=a.getSample(0,i),y=b.getSample(0,i);
@@ -91,7 +98,7 @@ void runStudioTests()
                 }
         }
         check(power>1.e-4 && delta/(power+1.e-12)<1.e-5,
-              "MIDI note received during DSP sleep is missing after wake");
+              "MIDI Note On/Off during DSP sleep does not match waking reference");
         ++cases;
     }
     {
