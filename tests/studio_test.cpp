@@ -302,6 +302,24 @@ void runStudioTests()
     }
     if (std::getenv("JERZY_DSP_BENCHMARK") != nullptr)
     {
+        // Diagnostic, not a pass/fail threshold: a 10 kHz tone produces an
+        // 18 kHz aliased third harmonic at fs=48 kHz if saturation aliases.
+        JerzyAutoTuneAudioProcessor untreated,coloured;
+        dry(untreated);dry(coloured);
+        set(coloured,"satEnabled",1);set(coloured,"satDrive",18);set(coloured,"satMix",100);
+        const auto base=render(untreated,48000,10000);
+        const auto driven=render(coloured,48000,10000);
+        const double baseAlias=toneAmplitude(base,18000);
+        const double drivenAlias=toneAmplitude(driven,18000);
+        const double fundamental=toneAmplitude(driven,10000);
+        std::cout<<"QUALITY Saturation 48kHz / 10kHz: clean alias "
+                 <<baseAlias<<", driven alias "<<drivenAlias
+                 <<", alias/fundamental "
+                 <<20*std::log10(std::max(1.e-12,drivenAlias/std::max(1.e-12,fundamental)))
+                 <<" dBc (higher is worse)\n";
+    }
+    if (std::getenv("JERZY_DSP_BENCHMARK") != nullptr)
+    {
         // End-to-end timing includes the real host callback, not simulated
         // isolated DSP. Results are diagnostic, never CI pass thresholds.
         for(int mode=0;mode<3;++mode)
