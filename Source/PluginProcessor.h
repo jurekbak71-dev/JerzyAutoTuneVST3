@@ -110,6 +110,7 @@ private:
     juce::AudioBuffer<float> masterDelay;
     int masterWrite=0, masterRingLength=1;
     std::array<float,2> hardLow {}, hardHigh {}, hardEnvelope {}, satPrevious {}, satDc {};
+    std::array<jerzy::AntialiasedTanh,2> saturator{};
     jerzy::PitchTracker pitchTracker;
     jerzy::OutputLimiter finalLimiter;
     std::array<juce::SmoothedValue<float>, 7> bypassMix;
