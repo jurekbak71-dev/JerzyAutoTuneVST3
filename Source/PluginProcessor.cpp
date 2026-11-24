@@ -740,6 +740,19 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     {
         masterAsleep=true;
         float inMax=0.f,outMax=0.f;
+        // Use one dominant channel for the entire block. Switching the
+        // analyzer source every sample creates an incoherent FFT on stereo.
+        int tapChannel=0;
+        if(channels==2)
+        {
+            double leftEnergy=0,rightEnergy=0;
+            for(int i=0;i<samples;++i)
+            {
+                leftEnergy+=std::abs(buffer.getSample(0,i));
+                rightEnergy+=std::abs(buffer.getSample(1,i));
+            }
+            if(rightEnergy>leftEnergy*2.0)tapChannel=1;
+        }
         for(int i=0;i<samples;++i)
         {
             const int read=(masterWrite-getLatencySamples()+masterRingLength)%masterRingLength;
@@ -757,7 +770,6 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 buffer.setSample(ch,i,output[ch]);
                 outMax=juce::jmax(outMax,std::abs(output[ch]));
             }
-            const int tapChannel=channels==2 && std::abs(input[1])>std::abs(input[0])?1:0;
             analysis.push(output[tapChannel],output[tapChannel]);
             masterWrite=(masterWrite+1)%masterRingLength;
         }
