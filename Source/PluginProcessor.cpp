@@ -398,6 +398,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     const float gateThreshold = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("gateThreshold")->load());
     const float gateRange = juce::Decibels::decibelsToGain(-parameters.getRawParameterValue("gateRange")->load());
     const float gateAttack = coeffFromMs(parameters.getRawParameterValue("gateAttack")->load(), currentSampleRate);
+    const float gateDetectorAttack = coeffFromMs(2.0f, currentSampleRate);
     const float gateRelease = coeffFromMs(parameters.getRawParameterValue("gateRelease")->load(), currentSampleRate);
     const int gateHold = static_cast<int>(parameters.getRawParameterValue("gateHold")->load() * 0.001f * static_cast<float>(currentSampleRate));
 
@@ -405,6 +406,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     const float noiseThreshold = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("noiseThreshold")->load());
     const float noiseReduction = juce::Decibels::decibelsToGain(-parameters.getRawParameterValue("noiseReduction")->load());
     const float noiseRelease = coeffFromMs(parameters.getRawParameterValue("noiseRelease")->load(), currentSampleRate);
+    const float noiseDetectorAttack = coeffFromMs(5.0f, currentSampleRate);
     const float hpHz = parameters.getRawParameterValue("noiseHighPass")->load();
     const float hpA = std::exp(-juce::MathConstants<float>::twoPi * hpHz / static_cast<float>(currentSampleRate));
 
@@ -417,6 +419,8 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
 
     const bool satOn = parameters.getRawParameterValue("satEnabled")->load() >= 0.5f;
     const float satDrive = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("satDrive")->load());
+    const float satDriveNormaliser = 1.f / std::tanh(juce::jmax(1.f, satDrive));
+    const float satShapeNormaliser = 1.f / std::max(1.f, std::sqrt(satDrive));
     const float satTone = parameters.getRawParameterValue("satTone")->load() * 0.01f;
     const float satMix = parameters.getRawParameterValue("satMix")->load() * 0.01f;
     const float satOutput = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("satOutput")->load());
@@ -463,6 +467,8 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     const float hardB=std::exp(-2*juce::MathConstants<float>::pi*9000.f/float(currentSampleRate));
     const float hardRelease=coeffFromMs(40,currentSampleRate),satDcCoeff=std::exp(-2*juce::MathConstants<float>::pi*12.f/float(currentSampleRate));
     const int saturationModel=advanced?int(value("satModel")):0;
+    const float satShape=saturationModel==1?.15f:.38f;
+    const float satShapeOffset=std::tanh(satShape);
 
     for (int ch = 0; ch < channels; ++ch)
     {
@@ -496,7 +502,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
             {
                 const float dry = x;
                 const float level = std::abs(x);
-                const float envCoeff = level > gateEnvelope[ci] ? coeffFromMs(2.0f, currentSampleRate) : gateRelease;
+                const float envCoeff = level > gateEnvelope[ci] ? gateDetectorAttack : gateRelease;
                 gateEnvelope[ci] = envCoeff * gateEnvelope[ci] + (1.0f - envCoeff) * level;
                 if (gateEnvelope[ci] >= gateThreshold)
                     gateHoldSamples[ci] = gateHold;
@@ -517,8 +523,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
                 noisePrevInput[ci] = x;
                 noiseHpState[ci] = hp;
                 const float e = std::abs(hp);
-                const float attack = coeffFromMs(5.0f, currentSampleRate);
-                const float ec = e > noiseEnvelope[ci] ? attack : noiseRelease;
+                const float ec = e > noiseEnvelope[ci] ? noiseDetectorAttack : noiseRelease;
                 noiseEnvelope[ci] = ec * noiseEnvelope[ci] + (1.0f - ec) * e;
                 const float t = juce::jlimit(0.0f, 1.0f, noiseEnvelope[ci] / juce::jmax(1.0e-7f, noiseThreshold));
                 const float suppress = noiseReduction + (1.0f - noiseReduction) * t;
@@ -555,11 +560,11 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
                 const float low = satToneLow[ci];
                 const float high = x - low;
                 const float pre = low * (1.0f - 0.35f * satTone) + high * (1.0f + 0.35f * satTone);
-                float driven = std::tanh(pre * satDrive) / std::tanh(juce::jmax(1.0f, satDrive));
+                float driven = std::tanh(pre * satDrive) * satDriveNormaliser;
                 if(saturationModel>0)
                 {
-                    const float shape=saturationModel==1?.15f:.38f;
-                    const float coloured=(std::tanh(pre*satDrive+shape)-std::tanh(shape))/std::max(1.f,std::sqrt(satDrive));
+                    // Shape coefficients are constant over the current processing block.
+                    const float coloured=(std::tanh(pre*satDrive+satShape)-satShapeOffset)*satShapeNormaliser;
                     driven=coloured-satPrevious[ci]+satDcCoeff*satDc[ci];satPrevious[ci]=coloured;satDc[ci]=driven;
                 }
                 x = (x + (driven - x) * satMix) * satOutput;
