@@ -477,25 +477,74 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
     {
         for(int stage=0;stage<2;++stage)
         {
-            auto chart=r.withWidth((r.getWidth()-30)*.5f).translated(stage*(r.getWidth()+30)*.5f,0);
+            const auto chart=r.withWidth((r.getWidth()-30)*.5f)
+                              .translated(stage*(r.getWidth()+30)*.5f,0);
+            const auto transfer=expanded?chart:chart.withHeight(chart.getHeight()-105.f);
             g.setColour(juce::Colour(10,15,14));g.fillRect(chart);
             const auto value=[this](const char* id){return processor.parameters.getRawParameterValue(id)->load();};
-            const float threshold=value(stage==0?"compThreshold":"comp2Threshold"),ratio=value(stage==0?"compRatio":"comp2Ratio"),makeup=value(stage==0?"compMakeup":"comp2Makeup");
-            const float knee=std::max(value(stage==0?"compKnee":"comp2Knee"),value(stage==0?"compStyle":"comp2Style")>=2?8.f:0.f);
-            for(int i=0;i<5;++i){g.setColour(raised);g.drawVerticalLine(int(chart.getX()+chart.getWidth()*i/4),chart.getY(),chart.getBottom());g.drawHorizontalLine(int(chart.getY()+chart.getHeight()*i/4),chart.getX(),chart.getRight());text(g,juce::String(-60+15*i),{chart.getX()+chart.getWidth()*i/4-14,chart.getBottom()+4,35,20},14,silver);}
+            const float threshold=value(stage==0?"compThreshold":"comp2Threshold");
+            const float ratio=value(stage==0?"compRatio":"comp2Ratio");
+            const float makeup=value(stage==0?"compMakeup":"comp2Makeup");
+            const float knee=std::max(value(stage==0?"compKnee":"comp2Knee"),
+                                      value(stage==0?"compStyle":"comp2Style")>=2?8.f:0.f);
+            for(int i=0;i<5;++i)
+            {
+                g.setColour(raised);
+                g.drawVerticalLine(int(transfer.getX()+transfer.getWidth()*i/4),
+                                   transfer.getY(),transfer.getBottom());
+                g.drawHorizontalLine(int(transfer.getY()+transfer.getHeight()*i/4),
+                                     transfer.getX(),transfer.getRight());
+                text(g,juce::String(-60+15*i),
+                     {transfer.getX()+transfer.getWidth()*i/4-14,transfer.getBottom()+4,35,20},
+                     14,silver);
+            }
             juce::Path path;
             for(int i=0;i<=100;++i)
             {
                 const float level=-60+.6f*i,over=level-threshold;
                 const float gr=jerzy::studio::Compressor::gainReduction(over,ratio,knee);
-                const float x=chart.getX()+i*chart.getWidth()/100,y=juce::jlimit(chart.getY(),chart.getBottom(),dbY(level-gr+makeup,chart,-60,0));
+                const float x=transfer.getX()+i*transfer.getWidth()/100;
+                const float y=juce::jlimit(transfer.getY(),transfer.getBottom(),
+                                           dbY(level-gr+makeup,transfer,-60,0));
                 if(i==0)path.startNewSubPath(x,y);else path.lineTo(x,y);
             }
             const bool on=value(stage==0?"compEnabled":"comp2Enabled")>.5f;
-            g.setColour(on?white:muted.withAlpha(.5f));g.strokePath(path,juce::PathStrokeType(2));
-            text(g,juce::String(stage==0?"COMPRESSOR 1":"COMPRESSOR 2")+"  /  LIVE GR "+juce::String(stage==0?compressorDisplayDb:stageBDisplayDb,1)+" dB",{chart.getX()+10,chart.getY()+9,chart.getWidth()-20,28},18);
+            g.setColour(on?white:muted.withAlpha(.5f));
+            g.strokePath(path,juce::PathStrokeType(2));
+            text(g,juce::String(stage==0?"COMPRESSOR 1":"COMPRESSOR 2")+
+                   "  /  LIVE GR "+juce::String(stage==0?compressorDisplayDb:stageBDisplayDb,1)+" dB",
+                   {chart.getX()+10,chart.getY()+9,chart.getWidth()-20,28},18);
+
+            if(!expanded)
+            {
+                const auto history=juce::Rectangle<float>(chart.getX()+10,chart.getBottom()-60,
+                                                          chart.getWidth()-20,49);
+                text(g,"GAIN REDUCTION HISTORY / 8.7 s",
+                     {history.getX(),history.getY()-21,history.getWidth()-5,19},14,silver);
+                g.setColour(juce::Colour(7,12,11));g.fillRect(history);
+                for(int mark=0;mark<=2;++mark)
+                {
+                    const float y=history.getY()+history.getHeight()*mark/2;
+                    g.setColour(raised);g.drawHorizontalLine(int(y),history.getX(),history.getRight());
+                }
+                const auto& samples=stage==0?reductionHistory:stageBHistory;
+                juce::Path gainTrace;
+                for(size_t i=0;i<samples.size();++i)
+                {
+                    const auto index=(historyWrite+i)%samples.size();
+                    const float gr=juce::jlimit(0.f,24.f,samples[index]);
+                    const float x=history.getX()+float(i)*history.getWidth()/float(samples.size()-1);
+                    const float y=history.getBottom()-gr*history.getHeight()/24.f;
+                    if(i==0)gainTrace.startNewSubPath(x,y);else gainTrace.lineTo(x,y);
+                }
+                g.setColour(on?juce::Colour(133,185,177):muted.withAlpha(.5f));
+                g.strokePath(gainTrace,juce::PathStrokeType(1.6f));
+                text(g,"24",{history.getRight()-28,history.getY(),26,18},13,silver);
+                text(g,"0",{history.getRight()-28,history.getBottom()-18,26,18},13,silver);
+            }
         }
-        if(!expanded)text(g,"STEREO LINKED   /   SOFT KNEE, SIDECHAIN AND WARM IN ALL CONTROLS",{153,731,938,25},17,silver);
+        if(!expanded)text(g,"TRANSFER CURVE (MODEL)  /  GAIN REDUCTION (MEASURED)",
+                          {153,731,938,25},17,silver);
     }
     else if(page==4)
     {
