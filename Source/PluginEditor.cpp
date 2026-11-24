@@ -493,7 +493,7 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
             }
             const bool on=value(stage==0?"compEnabled":"comp2Enabled")>.5f;
             g.setColour(on?white:muted.withAlpha(.5f));g.strokePath(path,juce::PathStrokeType(2));
-            text(g,juce::String(stage==0?"COMPRESSOR 1":"COMPRESSOR 2")+"    GR "+juce::String(stage==0?compressorDisplayDb:stageBDisplayDb,1)+" dB",{chart.getX()+10,chart.getY()+9,chart.getWidth()-20,28},19);
+            text(g,juce::String(stage==0?"COMPRESSOR 1":"COMPRESSOR 2")+"  /  LIVE GR "+juce::String(stage==0?compressorDisplayDb:stageBDisplayDb,1)+" dB",{chart.getX()+10,chart.getY()+9,chart.getWidth()-20,28},18);
         }
         if(!expanded)text(g,"STEREO LINKED   /   SOFT KNEE, SIDECHAIN AND WARM IN ALL CONTROLS",{153,731,938,25},17,silver);
     }
@@ -504,8 +504,11 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
         for(int i=0;i<=4;++i){const float x=r.getX()+r.getWidth()*i/4;g.setColour(raised);g.drawVerticalLine(int(x),r.getY(),r.getBottom());text(g,juce::String((decay*1.2f+pre)*i/4,2)+" s",{x-25,r.getBottom()+4,65,20},14,silver);}
         for(int i=0;i<=4;++i){const float y=r.getY()+r.getHeight()*i/4;g.setColour(raised);g.drawHorizontalLine(int(y),r.getX(),r.getRight());text(g,juce::String(-18*i)+" dB",{r.getX()+6,y+2,70,20},14,silver);}
         juce::Path path;for(int i=0;i<240;++i){const float t=float(i)*(decay*1.2f+pre)/239,value=t<pre?-72.f:-60.f*(t-pre)/decay,x=r.getX()+r.getWidth()*i/239,y=juce::jlimit(r.getY(),r.getBottom(),dbY(value,r));if(i==0)path.startNewSubPath(x,y);else path.lineTo(x,y);}
-        g.setColour(white);g.strokePath(path,juce::PathStrokeType(2));
-        text(g,"-60 dB / "+juce::String(decay,2)+" s   /   "+juce::String(processor.getTempo(),1)+" BPM",{403,173,430,26},18,silver);
+        const bool reverbOn=processor.parameters.getRawParameterValue("reverbEnabled")->load()>.5f;
+        g.setColour(reverbOn?white:muted.withAlpha(.45f));
+        g.strokePath(path,juce::PathStrokeType(2));
+        text(g,reverbOn?"DECAY MODEL / "+juce::String(decay,2)+" s   /   "+juce::String(processor.getTempo(),1)+" BPM":
+                    "REVERB OFF / DECAY MODEL (NOT LIVE)",{403,173,430,26},16,silver);
     }
     else if(page==5&&!expanded)
     {
