@@ -58,6 +58,8 @@ public:
     // Peak over all audio callbacks since the previous GUI frame, not one random host block.
     float consumeInputMeterPeak() noexcept { return inputMeterPeak.exchange(0.f, std::memory_order_acq_rel); }
     float consumeOutputMeterPeak() noexcept { return outputMeterPeak.exchange(0.f, std::memory_order_acq_rel); }
+    float consumeCompressorReduction() noexcept { return compressorReductionMeter.exchange(0.f, std::memory_order_acq_rel); }
+    float consumeStageBReduction() noexcept { return stageBReductionMeter.exchange(0.f, std::memory_order_acq_rel); }
     float eqResponse(float frequency) const noexcept;
     float getOutputPeak() const noexcept { return outputPeak.load(std::memory_order_relaxed); }
     float getInputPeak() const noexcept { return inputPeak.load(std::memory_order_relaxed); }
@@ -147,6 +149,7 @@ private:
     std::atomic<float> displayPitch { -1.0f }, displayCorrection { 0.0f }, compressorReduction { 0.0f };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
     std::atomic<float> inputMeterPeak { 0.0f }, outputMeterPeak { 0.0f };
+    std::atomic<float> compressorReductionMeter { 0.0f }, stageBReductionMeter { 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(JerzyAutoTuneAudioProcessor)
 };
