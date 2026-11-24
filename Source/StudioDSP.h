@@ -20,6 +20,19 @@ inline float readDelay(const std::vector<float>& ring, size_t write, float delay
     return ring[a] + (ring[b] - ring[a]) * fraction;
 }
 
+// Keep the pitch graph stable during vibrato and small note transitions. Pan
+// only if the detected note approaches the edge of the 12-semitone viewport.
+// Extracted from the editor so the behavior can be regression-tested.
+inline float steadyPitchCentre(float centre,float note) noexcept
+{
+    if(!std::isfinite(note)||note<0.f)return centre;
+    if(centre<0.f)return std::round(note);
+    constexpr float margin=4.5f,step=.40f;
+    if(note>centre+margin)return centre+std::min(step,note-centre-margin);
+    if(note<centre-margin)return centre-std::min(step,centre-margin-note);
+    return centre;
+}
+
 // Single audio-thread producer, UI-thread consumer. Keep much more history
 // than the 2048-sample FFT window so the UI normally reads behind the writer,
 // not from slots the callback is overwriting at that instant. No audio locks.
