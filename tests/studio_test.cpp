@@ -297,5 +297,45 @@ void runStudioTests()
                      <<elapsed<<" ms / "<<frames<<" frames, checksum "<<checksum<<"\n";
         }
     }
+    if (std::getenv("JERZY_DSP_BENCHMARK") != nullptr)
+    {
+        // End-to-end timing includes the real host callback, not simulated
+        // isolated DSP. Results are diagnostic, never CI pass thresholds.
+        for(int mode=0;mode<3;++mode)
+        {
+            JerzyAutoTuneAudioProcessor p;
+            dry(p);
+            if(mode==0)set(p,"masterEnabled",0);
+            if(mode==2)
+            {
+                set(p,"tuneEnabled",1);set(p,"mix",100);
+                set(p,"satEnabled",1);set(p,"satDrive",18);
+                set(p,"compEnabled",1);set(p,"reverbEnabled",1);
+                set(p,"delayEnabled",1);set(p,"voiceEnabled",1);
+                set(p,"limiterEnabled",1);
+            }
+            p.prepareToPlay(48000,128);
+            juce::AudioBuffer<float> block(2,128);juce::MidiBuffer midi;
+            float checksum=0;
+            const auto begin=std::chrono::steady_clock::now();
+            constexpr int total=128*750;
+            for(int n=0;n<750;++n)
+            {
+                for(int i=0;i<128;++i)
+                {
+                    const float sample=.3f*std::sin(float(n*128+i)*.031f);
+                    block.setSample(0,i,sample);block.setSample(1,i,sample);
+                }
+                p.processBlock(block,midi);
+                checksum+=block.getSample(0,n%128);
+            }
+            const auto elapsed=std::chrono::duration<double,std::milli>(
+                std::chrono::steady_clock::now()-begin).count();
+            std::cout<<"BENCH FullProcessor "
+                     <<(mode==0?"master-bypass":mode==1?"effects-off":"effects-on")
+                     <<": "<<elapsed<<" ms / "<<total
+                     <<" frames, checksum "<<checksum<<"\n";
+        }
+    }
     std::cout<<"PASS: "<<cases<<" studio audio regressions (WOLA, learned noise, dynamics, sibilance, reverb, delay, choir, harmony, MIDI, key, master bypass)\n";
 }
