@@ -61,7 +61,42 @@ int main()
             }
             ++checks;
         }
-        std::cout<<"PASS: "<<checks<<" DSP cases: sample rates, harmonic pitch, noise/DC rejection, stereo ceiling, latency\n";
+        // Compare ADAA against the previous direct tanh at a frequency
+        // whose third harmonic folds from 30 kHz down to 18 kHz at 48 kHz.
+        for(float bias : {0.f,.15f,.38f})
+        {
+            jerzy::AntialiasedTanh shaper;
+            constexpr int fs=48000, total=48000, warmup=24000;
+            constexpr float drive=8.f, amplitude=.35f;
+            double refReal=0,refImag=0,aaReal=0,aaImag=0;
+            double outputEnergy=0;
+            for(int i=0;i<total;++i)
+            {
+                const float x=amplitude*std::sin(float(2*pi*10000*i/fs));
+                const float direct=std::tanh(drive*x+bias);
+                const float filtered=shaper.process(x,drive,bias);
+                check(std::isfinite(filtered),"Nonfinite ADAA sample");
+                if(i>=warmup)
+                {
+                    const double angle=2*pi*18000*i/fs;
+                    refReal+=double(direct)*std::cos(angle);
+                    refImag+=double(direct)*std::sin(angle);
+                    aaReal+=double(filtered)*std::cos(angle);
+                    aaImag+=double(filtered)*std::sin(angle);
+                    outputEnergy+=double(filtered)*filtered;
+                }
+            }
+            const double refAlias=std::hypot(refReal,refImag);
+            const double aaAlias=std::hypot(aaReal,aaImag);
+            check(refAlias>1000 && aaAlias<refAlias*.55,
+                  "ADAA failed to reduce folded 18-kHz saturation harmonic by >= 5 dB");
+            check(outputEnergy>100,"ADAA muted saturated audio");
+            shaper.reset();
+            check(std::abs(shaper.process(.35f,drive,bias)-std::tanh(drive*.35f+bias))<1.e-6f,
+                  "ADAA reentry is not initialised to an ordinary tanh sample");
+            ++checks;
+        }
+        std::cout<<"PASS: "<<checks<<" DSP cases: sample rates, harmonic pitch, noise/DC rejection, stereo ceiling, latency, saturation aliasing\n";
     }
     catch(const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }
