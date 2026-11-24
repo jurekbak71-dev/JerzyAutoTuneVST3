@@ -567,14 +567,7 @@ void JerzyAutoTuneAudioProcessorEditor::timerCallback()
         waveHistory[historyWrite]=std::sqrt(inEnergy/float(input.size()));
         wavePeakHistory[historyWrite]=std::sqrt(outEnergy/float(output.size()));
         const float pitch=processor.getDetectedPitch();
-        if(pitch>=0.f&&std::isfinite(pitch))
-        {
-            if(pitchViewCentre<0.f)pitchViewCentre=std::round(pitch);
-            else if(pitch>pitchViewCentre+4.5f)
-                pitchViewCentre+=juce::jmin(.40f,pitch-pitchViewCentre-4.5f);
-            else if(pitch<pitchViewCentre-4.5f)
-                pitchViewCentre-=juce::jmin(.40f,pitchViewCentre-pitch-4.5f);
-        }
+        pitchViewCentre=jerzy::studio::steadyPitchCentre(pitchViewCentre,pitch);
         pitchHistory[historyWrite]=pitch;
         targetHistory[historyWrite]=processor.getTargetNote();
         reductionHistory[historyWrite]=processor.getCompressorReduction();
