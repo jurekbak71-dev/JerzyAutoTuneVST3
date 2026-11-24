@@ -74,6 +74,35 @@ void runStudioTests()
         ++cases;
     }
     {
+        // Prove that the output FFT reads sound AFTER saturation, and not the
+        // old spectral-prep intermediate that used to be mislabeled as OUT.
+        JerzyAutoTuneAudioProcessor p;
+        dry(p);set(p,"masterEnabled",1);set(p,"satEnabled",1);
+        set(p,"satMix",100);set(p,"satDrive",18);
+        p.prepareToPlay(48000,128);
+        juce::AudioBuffer<float> block(2,128);juce::MidiBuffer midi;
+        for(int n=0;n<170;++n)
+        {
+            for(int i=0;i<128;++i)
+            {
+                const float sample=.35f*std::sin(float(n*128+i)*.027f);
+                block.setSample(0,i,sample);block.setSample(1,i,sample);
+            }
+            p.processBlock(block,midi);
+        }
+        std::array<float,2048> in{},out{};
+        p.copyAnalysis(in,out);
+        float difference=0,maximum=0;
+        for(size_t i=0;i<in.size();++i)
+        {
+            difference=std::max(difference,std::abs(in[i]-out[i]));
+            maximum=std::max(maximum,std::abs(out[i]));
+        }
+        check(maximum>.05f && difference>.05f,
+              "Output FFT tap is not following the final saturated audio path");
+        ++cases;
+    }
+    {
         // The visualizer must use the FINAL processor output and a latency-aligned
         // dry reference, so a real master bypass plots coincident signals.
         JerzyAutoTuneAudioProcessor p;
