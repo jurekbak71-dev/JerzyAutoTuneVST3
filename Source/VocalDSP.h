@@ -116,6 +116,47 @@ private:
     float midi=-1,confidence=0,pending=-1;
 };
 
+// First-order antiderivative antialiasing (ADAA) for tanh waveshaping.
+// This suppresses folded high-frequency harmonics without adding a resampler
+// or a block of host latency. The effective phase delay is ~0.5 sample.
+// Keep one instance PER CHANNEL: sharing a state corrupts stereo processing.
+class AntialiasedTanh
+{
+public:
+    void reset() noexcept { previous=0.f; ready=false; }
+    float process(float x,float drive,float offset=0.f) noexcept
+    {
+        if(!std::isfinite(x)){reset();return 0.f;}
+        drive=std::max(0.01f,drive);
+        const double now=static_cast<double>(x);
+        const double before=static_cast<double>(previous);
+        const double g=static_cast<double>(drive),bias=static_cast<double>(offset);
+        float result;
+        if(!ready || std::abs(now-before)<1.e-4)
+        {
+            result=static_cast<float>(std::tanh(g*(ready ? (now+before)*.5 : now)+bias));
+        }
+        else
+        {
+            // F(x)=log(cosh(g*x+bias))/g; divided differences of F
+            // approximate the band-limited, nonlinearly-shaped waveform.
+            const double difference=stableLogCosh(g*now+bias)-stableLogCosh(g*before+bias);
+            result=static_cast<float>(difference/(g*(now-before)));
+        }
+        previous=x;ready=true;
+        return std::isfinite(result)?result:0.f;
+    }
+private:
+    static double stableLogCosh(double x) noexcept
+    {
+        constexpr double ln2=0.6931471805599453094;
+        const double magnitude=std::abs(x);
+        return magnitude+std::log1p(std::exp(-2.0*magnitude))-ln2;
+    }
+    float previous=0.f;
+    bool ready=false;
+};
+
 // Stereo-linked lookahead sample-peak limiter. All storage allocated in prepare.
 // Sliding maximum includes the delayed sample; gain never exceeds its safe bound.
 class OutputLimiter
