@@ -402,8 +402,8 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
     if(page==0)
     {
         g.setColour(juce::Colour(11,16,16));g.fillRect(r);
-        const float pitch=processor.getDetectedPitch();const int centre=pitch>=0?int(std::round(pitch)):60;
-        for(int note=centre-6;note<=centre+6;++note)
+        const float pitch=processor.getDetectedPitch();const float centre=pitchViewCentre>=0.f?pitchViewCentre:60.f;
+        for(int note=int(std::floor(centre))-6;note<=int(std::ceil(centre))+6;++note)
         {
             const float y=r.getCentreY()-(note-centre)*r.getHeight()/12;
             if(y<r.getY()||y>r.getBottom())continue;
@@ -429,11 +429,11 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
             text(g,"CURRENT NOTE",{867,163,222,20},16,silver);
             const int note=juce::roundToInt(pitch);
             text(g,pitch<0?"--":juce::String(noteNames[(note%12+12)%12])+juce::String(note/12-1),{869,184,108,49},43);
-            text(g,juce::String(juce::roundToInt(processor.getCorrectionCents()))+" ct",{977,192,111,31},25);
+            text(g,juce::String(juce::roundToInt(correctionDisplayCents))+" ct",{977,192,111,31},25);
             for(int pass=0;pass<2;++pass)
             {
                 const float y=pass==0?587.f:663.f,height=pass==0?28.f:22.f;
-                text(g,pass==0?"IN":"PREP",{129,y-10,34,20},14,silver,juce::Justification::centred);
+                text(g,pass==0?"IN":"OUT",{129,y-10,34,20},14,silver,juce::Justification::centred);
                 g.setColour(juce::Colour(8,12,11));g.fillRect(166.f,y-height,665.f,height*2);
                 g.setColour(silver.withAlpha(pass==0?.68f:.44f));
                 for(size_t i=0;i<waveHistory.size();++i)
@@ -493,7 +493,7 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
             }
             const bool on=value(stage==0?"compEnabled":"comp2Enabled")>.5f;
             g.setColour(on?white:muted.withAlpha(.5f));g.strokePath(path,juce::PathStrokeType(2));
-            text(g,juce::String(stage==0?"COMPRESSOR 1":"COMPRESSOR 2")+"    GR "+juce::String(stage==0?processor.getCompressorReduction():processor.getStageBReduction(),1)+" dB",{chart.getX()+10,chart.getY()+9,chart.getWidth()-20,28},19);
+            text(g,juce::String(stage==0?"COMPRESSOR 1":"COMPRESSOR 2")+"    GR "+juce::String(stage==0?compressorDisplayDb:stageBDisplayDb,1)+" dB",{chart.getX()+10,chart.getY()+9,chart.getWidth()-20,28},19);
         }
         if(!expanded)text(g,"STEREO LINKED   /   SOFT KNEE, SIDECHAIN AND WARM IN ALL CONTROLS",{153,731,938,25},17,silver);
     }
@@ -532,22 +532,72 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
 }
 void JerzyAutoTuneAudioProcessorEditor::timerCallback()
 {
-    processor.copyAnalysis(input,output);
-    std::array<float,4096> data{};
-    for(int pass=0;pass<2;++pass)
+    // A 30 Hz timer is not an audio clock. Freeze the history while transport
+    // is stopped instead of endlessly appending the last detected pitch.
+    const uint64_t sequence=processor.getAnalysisSequence();
+    const bool hasNewAudio=sequence!=lastAnalysisSequence;
+    if(hasNewAudio)
     {
-        data.fill(0);for(size_t i=0;i<input.size();++i)data[i]=(pass==0?input[i]:output[i])*(.5f-.5f*std::cos(2*juce::MathConstants<float>::pi*float(i)/2048));
-        fft.performFrequencyOnlyForwardTransform(data.data());
-        auto& dest=pass==0?spectrum:processedSpectrum;
-        for(size_t i=0;i<dest.size();++i){const float value=juce::Decibels::gainToDecibels(data[i]/512.f,-90.f);dest[i]=.45f*value+.55f*dest[i];}
+        processor.copyAnalysis(input,output);
+        lastAnalysisSequence=sequence;
+        std::array<float,4096> data{};
+        for(int pass=0;pass<2;++pass)
+        {
+            data.fill(0.f);
+            for(size_t i=0;i<input.size();++i)
+                data[i]=(pass==0?input[i]:output[i])
+                    *(.5f-.5f*std::cos(2*juce::MathConstants<float>::pi*float(i)/2048.f));
+            fft.performFrequencyOnlyForwardTransform(data.data());
+            auto& dest=pass==0?spectrum:processedSpectrum;
+            for(size_t i=0;i<dest.size();++i)
+            {
+                const float value=juce::Decibels::gainToDecibels(data[i]/512.f,-90.f);
+                // A gently falling peak envelope avoids rapid flicker but reacts
+                // promptly to real new harmonics.
+                const float alpha=value>dest[i]?.30f:.10f;
+                dest[i]+=alpha*(value-dest[i]);
+            }
+        }
+        float inEnergy=0,outEnergy=0;
+        for(size_t i=0;i<input.size();++i)
+        {
+            inEnergy+=input[i]*input[i];
+            outEnergy+=output[i]*output[i];
+        }
+        waveHistory[historyWrite]=std::sqrt(inEnergy/float(input.size()));
+        wavePeakHistory[historyWrite]=std::sqrt(outEnergy/float(output.size()));
+        const float pitch=processor.getDetectedPitch();
+        if(pitch>=0.f&&std::isfinite(pitch))
+        {
+            if(pitchViewCentre<0.f)pitchViewCentre=std::round(pitch);
+            else if(pitch>pitchViewCentre+4.5f)
+                pitchViewCentre+=juce::jmin(.40f,pitch-pitchViewCentre-4.5f);
+            else if(pitch<pitchViewCentre-4.5f)
+                pitchViewCentre-=juce::jmin(.40f,pitchViewCentre-pitch-4.5f);
+        }
+        pitchHistory[historyWrite]=pitch;
+        targetHistory[historyWrite]=processor.getTargetNote();
+        reductionHistory[historyWrite]=processor.getCompressorReduction();
+        stageBHistory[historyWrite]=processor.getStageBReduction();
+        historyWrite=(historyWrite+1)%pitchHistory.size();
+        correctionDisplayCents+=.28f*(processor.getCorrectionCents()-correctionDisplayCents);
     }
-    float inEnergy=0,outEnergy=0;for(size_t i=0;i<input.size();++i){inEnergy+=input[i]*input[i];outEnergy+=output[i]*output[i];}
-    waveHistory[historyWrite]=std::sqrt(inEnergy/float(input.size()));wavePeakHistory[historyWrite]=std::sqrt(outEnergy/float(output.size()));
-    pitchHistory[historyWrite]=processor.getDetectedPitch();targetHistory[historyWrite]=processor.getTargetNote();reductionHistory[historyWrite]=processor.getCompressorReduction();stageBHistory[historyWrite]=processor.getStageBReduction();historyWrite=(historyWrite+1)%pitchHistory.size();
-    inputDb=juce::jmax(juce::Decibels::gainToDecibels(processor.getInputPeak(),-60.f),inputDb-1.5f);outputDb=juce::jmax(juce::Decibels::gainToDecibels(processor.getOutputPeak(),-60.f),outputDb-1.5f);
-    const float over=juce::jmax(processor.getInputOverload(),processor.getOutputOverload());resetPeak.setToggleState(over>=1,juce::dontSendNotification);resetPeak.setButtonText(over>=1?"! OVER":"RESET PEAK");
-    for(int i=0;i<7;++i)navigation[size_t(i)].getProperties().set("moduleState",processor.parameters.getRawParameterValue(pagePower[i])->load()>.5f);
-    undo.setEnabled(processor.undoManager.canUndo());applyKey.setEnabled(processor.getSuggestedKey()>=0);surface.repaint();
+    // Aggregate peaks across all host audio callbacks instead of sampling an
+    // arbitrary last block; the UI drains these accumulators once per frame.
+    const float inPeak=processor.consumeInputMeterPeak();
+    const float outPeak=processor.consumeOutputMeterPeak();
+    inputDb=juce::jmax(juce::Decibels::gainToDecibels(inPeak,-60.f),inputDb-1.5f);
+    outputDb=juce::jmax(juce::Decibels::gainToDecibels(outPeak,-60.f),outputDb-1.5f);
+    compressorDisplayDb=juce::jmax(hasNewAudio?processor.getCompressorReduction():0.f,compressorDisplayDb-.7f);
+    stageBDisplayDb=juce::jmax(hasNewAudio?processor.getStageBReduction():0.f,stageBDisplayDb-.7f);
+    const float over=juce::jmax(processor.getInputOverload(),processor.getOutputOverload());
+    resetPeak.setToggleState(over>=1,juce::dontSendNotification);
+    resetPeak.setButtonText(over>=1?"! OVER":"RESET PEAK");
+    for(int i=0;i<7;++i)
+        navigation[size_t(i)].getProperties().set("moduleState",processor.parameters.getRawParameterValue(pagePower[i])->load()>.5f);
+    undo.setEnabled(processor.undoManager.canUndo());
+    applyKey.setEnabled(processor.getSuggestedKey()>=0);
+    surface.repaint();
 }
 void JerzyAutoTuneAudioProcessorEditor::setReal(const char* id,float value)
 {
