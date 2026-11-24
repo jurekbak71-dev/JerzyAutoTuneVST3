@@ -3,6 +3,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <functional>
+#include <chrono>
+#include <cstdlib>
 
 namespace
 {
@@ -177,6 +179,29 @@ void runStudioTests()
         check(restored.hasNoiseProfile(),"Saved noise profile was not restored");
         auto tree=restored.parameters.copyState();tree.setProperty("noiseProfile","invalid",nullptr);auto xml=tree.createXml();juce::MemoryBlock invalid;juce::AudioProcessor::copyXmlToBinary(*xml,invalid);
         restored.setStateInformation(invalid.getData(),int(invalid.getSize()));check(!restored.hasNoiseProfile(),"Malformed profile retained stale learned noise");++cases;
+    }
+    // Optional, informational measurement: no unstable wall-clock threshold gates CI.
+    // Use JERZY_DSP_BENCHMARK=1 to compare the real disabled and active Space paths.
+    if (std::getenv("JERZY_DSP_BENCHMARK") != nullptr)
+    {
+        constexpr int frames=48000*4;
+        for (bool enabled : {false,true})
+        {
+            Space s;
+            s.settings.reverb=enabled;s.settings.delay=enabled;s.settings.duck=0;
+            s.settings.reverbMix=40;s.settings.delayMix=40;
+            s.prepare(48000);
+            float checksum=0;
+            const auto begin=std::chrono::steady_clock::now();
+            for (int i=0;i<frames;++i)
+            {
+                float l=.2f*std::sin(float(i)*.012f),r=.2f*std::cos(float(i)*.015f);
+                s.process(l,r);checksum+=l+r;
+            }
+            const auto elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();
+            std::cout<<"BENCH Space "<<(enabled?"reverb+delay":"virgin-off")<<": "
+                     <<elapsed<<" ms / "<<frames<<" frames, checksum "<<checksum<<"\n";
+        }
     }
     std::cout<<"PASS: "<<cases<<" studio audio regressions (WOLA, learned noise, dynamics, sibilance, reverb, delay, choir, harmony, MIDI, key, master bypass)\n";
 }
