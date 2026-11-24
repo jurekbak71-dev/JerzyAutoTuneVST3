@@ -332,20 +332,52 @@ juce::Rectangle<float> JerzyAutoTuneAudioProcessorEditor::plotBounds() const
 
 void JerzyAutoTuneAudioProcessorEditor::drawSpectrum(juce::Graphics& g,juce::Rectangle<float> r,bool showOutput)
 {
-    grid(g,r);const float fs=processor.graphRate.load();
-    for(int i=0;i<5;++i)text(g,juce::String(page==3?18-9*i:-18*i),{130,r.getY()+r.getHeight()*i/4-9,32,20},14,silver,juce::Justification::centred);
-    if(!expanded&&page!=3)text(g,"INPUT  /  SPECTRAL OUT",{166,r.getBottom()+29,600,24},16,silver);
+    grid(g,r);
+    const bool eqResponsePage=page==3;
+    for(int i=0;i<5;++i)
+        text(g,juce::String(eqResponsePage ? 18-9*i : -18*i),
+             {130,r.getY()+r.getHeight()*i/4-9,32,20},14,silver,juce::Justification::centred);
+
+    // An EQ gain curve uses +18..-18 dB. Overlaying an FFT on that axis
+    // previously mixed two incompatible dB scales and was misleading.
+    if(eqResponsePage)
+    {
+        text(g,"EQ GAIN / dB",{170,r.getBottom()+27,320,23},16,silver);
+        return;
+    }
+
+    const auto inputColour=juce::Colour(133,185,177);
+    const auto outputColour=white;
+    if(!expanded)
+    {
+        text(g,"INPUT SPECTRUM",{166,r.getBottom()+27,240,24},16,inputColour);
+        if(showOutput)text(g,"FINAL OUTPUT",{416,r.getBottom()+27,240,24},16,outputColour);
+    }
+    const float fs=juce::jmax(1.f,processor.graphRate.load());
+    juce::Graphics::ScopedSaveState clipping(g);
+    g.reduceClipRegion(r.toNearestInt());
     for(int pass=0;pass<(showOutput?2:1);++pass)
     {
-        juce::Path path;bool first=true;
+        const auto& bins=pass==0?spectrum:processedSpectrum;
+        juce::Path path;
         for(int x=0;x<int(r.getWidth());++x)
         {
-            const float hz=xFrequency(r.getX()+float(x),r);const int bin=juce::jlimit(1,1024,int(hz*2048/fs));
-            const float y=juce::jlimit(r.getY(),r.getBottom(),dbY(pass==0?spectrum[size_t(bin)]:processedSpectrum[size_t(bin)],r));
-            if(first){path.startNewSubPath(r.getX()+float(x),r.getBottom());path.lineTo(r.getX()+float(x),y);first=false;}else path.lineTo(r.getX()+float(x),y);
+            const float hz=xFrequency(r.getX()+float(x),r);
+            const float fractionalBin=hz*2048.f/fs;
+            const int lower=juce::jlimit(1,1023,int(fractionalBin));
+            const float fraction=juce::jlimit(0.f,1.f,fractionalBin-float(lower));
+            const float magnitudeDb=bins[size_t(lower)]*(1.f-fraction)+bins[size_t(lower+1)]*fraction;
+            const float y=juce::jlimit(r.getY(),r.getBottom(),dbY(magnitudeDb,r));
+            if(x==0)path.startNewSubPath(r.getX(),y);
+            else path.lineTo(r.getX()+float(x),y);
         }
-        auto fill=path;fill.lineTo(r.getRight(),r.getBottom());fill.closeSubPath();g.setColour((pass==0?silver:white).withAlpha(pass==0?.15f:.06f));g.fillPath(fill);
-        g.setColour(pass==0?silver:white);g.strokePath(path,juce::PathStrokeType(pass==0?1.f:1.6f));
+        auto fill=path;
+        fill.lineTo(r.getRight(),r.getBottom());
+        fill.lineTo(r.getX(),r.getBottom());
+        fill.closeSubPath();
+        const auto colour=pass==0?inputColour:outputColour;
+        g.setColour(colour.withAlpha(pass==0?.11f:.07f));g.fillPath(fill);
+        g.setColour(colour);g.strokePath(path,juce::PathStrokeType(pass==0?1.4f:2.f));
     }
 }
 void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
