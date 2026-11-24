@@ -33,6 +33,54 @@ inline float steadyPitchCentre(float centre,float note) noexcept
     return centre;
 }
 
+// MIDI latch shared by normal processing and the CPU-sleeping master bypass.
+// Keeping it up to date prevents stale harmonizer notes after a long bypass.
+struct MidiLatch
+{
+    std::array<bool,128> held{}, sustained{};
+    bool pedal=false;
+
+    void reset() noexcept
+    {
+        held.fill(false);
+        sustained.fill(false);
+        pedal=false;
+    }
+
+    void receive(const juce::MidiMessage& message) noexcept
+    {
+        if(message.isNoteOn())
+        {
+            const auto note=size_t(message.getNoteNumber());
+            held[note]=true;
+            sustained[note]=false;
+        }
+        if(message.isNoteOff())
+        {
+            const auto note=size_t(message.getNoteNumber());
+            held[note]=false;
+            sustained[note]=pedal;
+        }
+        if(message.isSustainPedalOn())pedal=true;
+        if(message.isSustainPedalOff())
+        {
+            pedal=false;
+            sustained.fill(false);
+        }
+        if(message.isAllNotesOff()||message.isAllSoundOff())
+        {
+            held.fill(false);
+            sustained.fill(false);
+            if(message.isAllSoundOff())pedal=false;
+        }
+    }
+
+    bool active(int note) const noexcept
+    {
+        return note>=0 && note<128 && (held[size_t(note)]||sustained[size_t(note)]);
+    }
+};
+
 // Single audio-thread producer, UI-thread consumer. Keep much more history
 // than the 2048-sample FFT window so the UI normally reads behind the writer,
 // not from slots the callback is overwriting at that instant. No audio locks.
