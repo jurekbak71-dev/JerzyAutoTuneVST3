@@ -81,8 +81,9 @@ struct MidiLatch
             sustained[note]=pedal;
         }
         if(message.isSustainPedalOn())pedal=true;
-        if(message.isSustainPedalOff())
+        if(message.isSustainPedalOff()||message.isResetAllControllers())
         {
+            // CC121 clears controller state, including held sustain.
             pedal=false;
             sustained.fill(false);
         }
