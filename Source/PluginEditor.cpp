@@ -465,10 +465,14 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
             g.setColour(white);g.strokePath(curve,juce::PathStrokeType(2));
             const auto value=[this](const char* id){return processor.parameters.getRawParameterValue(id)->load();};
             const float hz[]={value("eqLowCut"),160,value("eqMidFreq"),10000,value("eqHighCut")};
-            const float gain[]={0,value("eqLow"),value("eqMid"),value("eqHigh"),0};
             for(int i=0;i<5;++i)
             {
-                const auto pt=juce::Point<float>(frequencyX(hz[i],r),r.getCentreY()-gain[i]*r.getHeight()/36);
+                // Anchor all handles to the ACTUAL combined EQ response.
+                // HP/LP and overlapping shelf gains are not necessarily 0 dB
+                // at their cutoff/centre frequencies.
+                const float response=processor.eqResponse(hz[i]);
+                const auto pt=juce::Point<float>(frequencyX(hz[i],r),
+                    juce::jlimit(r.getY(),r.getBottom(),r.getCentreY()-response*r.getHeight()/36));
                 g.setColour(juce::Colour(35,39,36));g.fillEllipse(pt.x-10,pt.y-10,20,20);g.setColour(i==dragBand?white:silver);g.drawEllipse(pt.x-10,pt.y-10,20,20,2);text(g,juce::String(i+1),{pt.x-8,pt.y-10,16,20},15,white,juce::Justification::centred);
             }
         }
@@ -664,9 +668,15 @@ void JerzyAutoTuneAudioProcessorEditor::chartMouseDown(const juce::MouseEvent& e
 {
     if(page!=3||!plotBounds().contains(event.position))return;
     const auto r=plotBounds();const auto value=[this](const char* id){return processor.parameters.getRawParameterValue(id)->load();};
-    const float hz[]={value("eqLowCut"),160,value("eqMidFreq"),10000,value("eqHighCut")},gain[]={0,value("eqLow"),value("eqMid"),value("eqHigh"),0};
+    const float hz[]={value("eqLowCut"),160,value("eqMidFreq"),10000,value("eqHighCut")};
     float best=24;dragBand=-1;
-    for(int i=0;i<5;++i){const float distance=event.position.getDistanceFrom({frequencyX(hz[i],r),r.getCentreY()-gain[i]*r.getHeight()/36});if(distance<best){best=distance;dragBand=i;}}
+    for(int i=0;i<5;++i)
+    {
+        const float y=juce::jlimit(r.getY(),r.getBottom(),
+            r.getCentreY()-processor.eqResponse(hz[i])*r.getHeight()/36);
+        const float distance=event.position.getDistanceFrom({frequencyX(hz[i],r),y});
+        if(distance<best){best=distance;dragBand=i;}
+    }
     if(dragBand>=0){processor.undoManager.beginNewTransaction("Drag EQ band");for(auto* id:{"eqLowCut","eqLow","eqMidFreq","eqMid","eqHigh","eqHighCut"})processor.parameters.getParameter(id)->beginChangeGesture();chartMouseDrag(event);}
 }
 void JerzyAutoTuneAudioProcessorEditor::chartMouseDrag(const juce::MouseEvent& event)
