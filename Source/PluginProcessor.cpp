@@ -265,6 +265,8 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
 
     inputPeak.store(0.0f, std::memory_order_relaxed);
     outputPeak.store(0.0f, std::memory_order_relaxed);
+    inputMeterPeak.store(0.0f, std::memory_order_relaxed);
+    outputMeterPeak.store(0.0f, std::memory_order_relaxed);
     displayPitch.store(-1.0f, std::memory_order_relaxed);
     displayCorrection.store(0.0f, std::memory_order_relaxed);
     compressorReduction.store(0.0f, std::memory_order_relaxed);
@@ -725,11 +727,10 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             blockInputPeak=juce::jmax(blockInputPeak,std::abs(input[size_t(ch)]));
         }
         if(channels==1)input[1]=input[0];
-        const float raw=input[0];spectralPrep->process(input[0],input[1],fundamental);analysis.push(raw,input[0]);
+        spectralPrep->process(input[0],input[1],fundamental);
         for(int ch=0;ch<channels;++ch)buffer.setSample(ch,i,input[size_t(ch)]);
         masterWrite=(masterWrite+1)%masterRingLength;
     }
-    analysis.publish();
     if(blockInputPeak>=1.f)inputOverload.store(juce::jmax(inputOverload.load(),blockInputPeak));
     mixSmoother.setTargetValue(value("tuneEnabled")>.5f?value("mix")*.01f:0.f);
     const bool harmonyActive=advanced&&value("harmonyEnabled")>.5f;
@@ -912,11 +913,22 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         {
             const float dry=masterDelay.getSample(ch,read),processed=buffer.getSample(ch,i);
             const float output=dry+(processed-dry)*wet;buffer.setSample(ch,i,output);
+            // Align the displayed input with the actually audible FINAL output.
+            // Record the first channel only once per sample, after master bypass.
+            if(ch==0)analysis.push(dry,output);
             blockOutputPeak=juce::jmax(blockOutputPeak,std::abs(output));
         }
     }
     if(blockOutputPeak>=1.f)outputOverload.store(juce::jmax(outputOverload.load(),blockOutputPeak));
 
+    // Accumulate the true peak of ALL callbacks between GUI refreshes.
+    const auto recordPeak=[](std::atomic<float>& meter,float next) noexcept {
+        float old=meter.load(std::memory_order_relaxed);
+        while(old<next && !meter.compare_exchange_weak(old,next,std::memory_order_relaxed)) {}
+    };
+    recordPeak(inputMeterPeak,blockInputPeak);
+    recordPeak(outputMeterPeak,blockOutputPeak);
+    analysis.publish();
     inputPeak.store(blockInputPeak, std::memory_order_relaxed);
     outputPeak.store(blockOutputPeak, std::memory_order_relaxed);
     displayPitch.store(detectedMidi, std::memory_order_relaxed);
