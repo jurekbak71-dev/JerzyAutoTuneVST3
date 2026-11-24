@@ -41,6 +41,60 @@ void runStudioTests()
     using namespace jerzy::studio;
     int cases=0;
     {
+        // FFT snapshots must be ordered, aligned and independent of the ring's
+        // current writer slot after wraparound.
+        AnalysisTap tap;
+        const int count=int(AnalysisTap::capacity+AnalysisTap::size+256);
+        for(int i=0;i<count;++i)
+        {
+            tap.push(float(i)*.0001f,-float(i)*.0002f);
+            if((i+1)%128==0)tap.publish();
+        }
+        tap.publish();
+        check(tap.sequence()==uint64_t(count),"Analysis sample clock is incorrect");
+        std::array<float,AnalysisTap::size> a{},b{};
+        tap.copy(a,b);
+        for(size_t i=0;i<a.size();++i)
+        {
+            const int original=count-int(AnalysisTap::size)+int(i);
+            check(a[i]==float(original)*.0001f && b[i]==-float(original)*.0002f,
+                  "Analysis FFT snapshot is wrapped, torn or misaligned");
+        }
+        ++cases;
+    }
+    {
+        // The visualizer must use the FINAL processor output and a latency-aligned
+        // dry reference, so a real master bypass plots coincident signals.
+        JerzyAutoTuneAudioProcessor p;
+        dry(p);set(p,"masterEnabled",0);
+        p.prepareToPlay(48000,128);
+        juce::AudioBuffer<float> block(2,128);juce::MidiBuffer midi;
+        for(int n=0;n<100;++n)
+        {
+            for(int i=0;i<128;++i)
+            {
+                const float sample=.35f*std::sin(float(n*128+i)*.017f);
+                block.setSample(0,i,sample);
+                block.setSample(1,i,sample);
+            }
+            p.processBlock(block,midi);
+        }
+        std::array<float,2048> in{},out{};
+        p.copyAnalysis(in,out);
+        float maxError=0,signal=0;
+        for(size_t i=0;i<in.size();++i)
+        {
+            maxError=std::max(maxError,std::abs(in[i]-out[i]));
+            signal=std::max(signal,std::abs(in[i]));
+        }
+        check(signal>.2f && maxError<1.e-6f,"Final visualizer bypass is not latency-aligned");
+        check(p.consumeInputMeterPeak()>.3f,"Input meter peak was not aggregated");
+        check(p.consumeOutputMeterPeak()>.3f,"Output meter peak was not aggregated");
+        check(p.consumeInputMeterPeak()==0 && p.consumeOutputMeterPeak()==0,
+              "UI peak accumulator did not clear on consume");
+        ++cases;
+    }
+    {
         const float below=Compressor::gainReduction(std::nextafter(3.f,0.f),3,6),at=Compressor::gainReduction(3,3,6),above=Compressor::gainReduction(std::nextafter(3.f,4.f),3,6);
         check(std::abs(at-2.f)<1.e-5f&&std::abs(at-below)<1.e-5f&&std::abs(above-at)<1.e-5f,"Soft knee has a discontinuity at its upper boundary");++cases;
     }
