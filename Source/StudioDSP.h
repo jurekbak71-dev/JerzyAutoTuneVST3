@@ -60,6 +60,7 @@ public:
     void prepare(double rate)
     {
         fs = rate; index = phase = frames = 0; learning = false; wasActive=false; fade = 0; warm = size;
+        spectralFadeCoefficient = 1.f - msCoefficient(10.f, fs);
         input = {}; overlap = {}; spectral = {}; dry = {}; gain.fill(1); noise.fill(0); accumulation.fill(0);
         for (int i = 0; i < size; ++i) window[size_t(i)] = std::sqrt(.5f - .5f * std::cos(2.f * pi * float(i) / float(size)));
         for (int k = 0; k < bins; ++k) noise[size_t(k)] = std::abs(profileRate.load()-fs)<.1 ? savedProfile[size_t(k)].load() : 0;
@@ -72,7 +73,7 @@ public:
         if (active && !wasActive) warm = size;
         wasActive = active;
         const float target = active && warm <= 0 ? 1.f : 0;
-        fade += (target - fade) * (1.f - msCoefficient(10, fs));
+        fade += (target - fade) * spectralFadeCoefficient;
         const float l = left, r = right;
         std::array<float, 2> current { l, r };
         for (size_t ch = 0; ch < 2; ++ch)
@@ -162,7 +163,7 @@ private:
     double fs = 48000;
     int index = 0, phase = 0, frames = 0, warm = size;
     bool learning = false, wasActive = false;
-    float fade = 0;
+    float fade = 0, spectralFadeCoefficient = 0;
     std::array<std::array<float, size>, 2> input {}, overlap {}, dry {};
     std::array<std::array<float, size*2>, 2> spectral {};
     std::array<float, size> window {};
@@ -233,6 +234,7 @@ public:
     void prepare(double rate)
     {
         fs=rate;position=0;echoLength=1;duckEnvelope=0;revFade=delFade=0;hpState={};lpState={};delayLow={};
+        duckRelease=msCoefficient(150.f,fs); virgin=true;
         for(auto& b:echo)b.assign(size_t(fs*6)+8,0);
         for(auto& b:pre)b.assign(size_t(fs*.26)+8,0);
         for(auto& line:lines){line.assign(size_t(fs*.24)+8,0);}
@@ -248,17 +250,24 @@ public:
         echoTarget=std::clamp(echoTarget,1.f,float(echo[0].size()-2));
         damp=std::exp(-2*pi*(2000+(1-settings.damping*.01f)*10000)/float(fs));
         hp=std::exp(-2*pi*160.f/float(fs)); lp=std::exp(-2*pi*8500.f/float(fs));smooth=1-msCoefficient(25,fs);
+        preDelaySamples=std::max(1.f,float(fs)*settings.preDelay*.001f);
+        delayFeedback=std::clamp(settings.feedback*.01f,0.f,.75f);
         if(echoLength<=1){echoLength=echoTarget;length=target;}
     }
     void process(float& left,float& right) noexcept
     {
+        // A never-activated rack is fully dry: do not run eight feedback lines
+        // and the echo network until one of the effects is first enabled.
+        // Once activated, keep advancing the tails even while bypassed.
+        if (virgin && !settings.reverb && !settings.delay) return;
+        virgin=false;
         revFade+=(float(settings.reverb)-revFade)*smooth;delFade+=(float(settings.delay)-delFade)*smooth;
         const float peak=std::max(std::abs(left),std::abs(right));
-        duckEnvelope=std::max(peak,duckEnvelope*msCoefficient(150,fs));
+        duckEnvelope=std::max(peak,duckEnvelope*duckRelease);
         const float duckGain=db(-settings.duck*std::clamp(duckEnvelope*4,0.f,1.f));
         const std::array<float,2> in{left,right};
         std::array<float,2> early{};
-        for(size_t ch=0;ch<2;++ch){pre[ch][prePosition]=in[ch];early[ch]=readDelay(pre[ch],prePosition,std::max(1.f,float(fs)*settings.preDelay*.001f));}
+        for(size_t ch=0;ch<2;++ch){pre[ch][prePosition]=in[ch];early[ch]=readDelay(pre[ch],prePosition,preDelaySamples);}
         prePosition=(prePosition+1)%pre[0].size();
         std::array<float,8> delayed{};float mean=0;
         for(size_t i=0;i<8;++i)
@@ -284,7 +293,7 @@ public:
         right+=(mid-side)*revFade*settings.reverbMix*.01f*duckGain;
         echoLength+=(echoTarget-echoLength)*smooth;
         const float dl=readDelay(echo[0],position,echoLength),dr=readDelay(echo[1],position,echoLength);
-        const float f=std::clamp(settings.feedback*.01f,0.f,.75f);
+        const float f=delayFeedback;
         delayLow[0]+=.35f*((settings.ping?dr:dl)-delayLow[0]);delayLow[1]+=.35f*((settings.ping?dl:dr)-delayLow[1]);
         echo[0][position]=(settings.ping?.5f*(in[0]+in[1]):in[0])+f*delayLow[0];echo[1][position]=(settings.ping?0.f:in[1])+f*delayLow[1];
         left+=dl*delFade*settings.delayMix*.01f*duckGain;right+=dr*delFade*settings.delayMix*.01f*duckGain;
@@ -298,6 +307,8 @@ private:
     std::array<float,8> low{},length{},target{},feedback{};
     std::array<float,2> hpState{},lpState{},delayLow{};
     float revFade=0,delFade=0,echoLength=1,echoTarget=1,duckEnvelope=0,damp=0,hp=0,lp=0,smooth=0;
+    float duckRelease=0,preDelaySamples=1,delayFeedback=0;
+    bool virgin=true;
 };
 
 class Choir
