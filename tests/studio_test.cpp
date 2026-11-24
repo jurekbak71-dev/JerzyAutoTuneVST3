@@ -3,6 +3,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <functional>
+#include <chrono>
+#include <cstdlib>
 
 namespace
 {
@@ -38,6 +40,233 @@ void runStudioTests()
 {
     using namespace jerzy::studio;
     int cases=0;
+    {
+        std::array<float,1025> inputSpectrum{},outputSpectrum{};
+        inputSpectrum.fill(-90.f);outputSpectrum.fill(-90.f);
+        check(spectraNearlyEqual(inputSpectrum,outputSpectrum),
+              "Silent FFT curves should be recognized as matching");
+        inputSpectrum[130]=outputSpectrum[130]=-18.f;
+        check(spectraNearlyEqual(inputSpectrum,outputSpectrum),
+              "Unchanged voiced FFT curves should not be double-drawn");
+        outputSpectrum[130]=-23.f;
+        check(!spectraNearlyEqual(inputSpectrum,outputSpectrum),
+              "Real 5-dB spectral difference incorrectly labelled identical");
+        outputSpectrum[130]=-18.5f;
+        check(spectraNearlyEqual(inputSpectrum,outputSpectrum),
+              "Sub-dB visual FFT jitter should not create a second trace");
+        ++cases;
+    }
+    {
+        // Integration: a note received during master DSP sleep must be held
+        // when audio resumes, as if it arrived at the first waking block.
+        JerzyAutoTuneAudioProcessor sleeping,reference;
+        for(auto* p:{&sleeping,&reference})
+        {
+            dry(*p);
+            set(*p,"masterEnabled",0);
+            set(*p,"harmonyEnabled",1);
+            set(*p,"harmonyMode",2);
+            set(*p,"harmonyMix",100);
+            set(*p,"harmony1Enabled",1);
+            set(*p,"harmony1Level",-6);
+            for(int v=2;v<=4;++v)
+            {
+                const auto id="harmony"+juce::String(v)+"Enabled";
+                set(*p,id.toRawUTF8(),0);
+            }
+            p->prepareToPlay(48000,128);
+        }
+        juce::AudioBuffer<float> a(2,128),b(2,128);
+        juce::MidiBuffer asleepEvents,awakeEvents;
+        double delta=0,power=0;
+        for(int block=0;block<820;++block)
+        {
+            if(block==140 || block==560)
+            {
+                set(sleeping,"masterEnabled",1);
+                set(reference,"masterEnabled",1);
+            }
+            if(block==420)
+            {
+                set(sleeping,"masterEnabled",0);
+                set(reference,"masterEnabled",0);
+            }
+            asleepEvents.clear();awakeEvents.clear();
+            if(block==10)asleepEvents.addEvent(
+                juce::MidiMessage::noteOn(1,64,juce::uint8(100)),0);
+            if(block==140)awakeEvents.addEvent(
+                juce::MidiMessage::noteOn(1,64,juce::uint8(100)),0);
+            if(block==500)asleepEvents.addEvent(juce::MidiMessage::noteOff(1,64),0);
+            if(block==560)awakeEvents.addEvent(juce::MidiMessage::noteOff(1,64),0);
+            for(int i=0;i<128;++i)
+            {
+                const float sample=.2f*std::sin(float(block*128+i)*.0287979f);
+                for(int ch=0;ch<2;++ch){a.setSample(ch,i,sample);b.setSample(ch,i,sample);}
+            }
+            sleeping.processBlock(a,asleepEvents);
+            reference.processBlock(b,awakeEvents);
+            if((block>=350 && block<400)||block>=750)
+                for(int i=0;i<128;++i)
+                {
+                    const double x=a.getSample(0,i),y=b.getSample(0,i);
+                    delta+=(x-y)*(x-y);
+                    power+=y*y;
+                }
+        }
+        check(power>1.e-4 && delta/(power+1.e-12)<1.e-5,
+              "MIDI Note On/Off during DSP sleep does not match waking reference");
+        ++cases;
+    }
+    {
+        // Notes and sustain change even while the CPU-heavy master DSP sleeps.
+        MidiLatch latch;
+        const auto on=juce::MidiMessage::noteOn(1,65,juce::uint8(100));
+        const auto off=juce::MidiMessage::noteOff(1,65);
+        latch.receive(on);
+        check(latch.active(65),"MIDI latch loses Note On");
+        latch.receive(juce::MidiMessage::controllerEvent(1,64,127));
+        latch.receive(off);
+        check(latch.active(65),"Sustain does not preserve a released note");
+        latch.receive(juce::MidiMessage::controllerEvent(1,64,0));
+        check(!latch.active(65),"Sustain off left a stuck MIDI note");
+        latch.receive(on);latch.receive(off);
+        check(!latch.active(65),"Note Off left a stuck MIDI note");
+        latch.receive(on);
+        latch.receive(juce::MidiMessage::controllerEvent(1,64,127));
+        latch.receive(off);
+        check(latch.active(65),"Failed to hold a sustained note before CC121");
+        latch.receive(juce::MidiMessage::controllerEvent(1,121,0));
+        check(!latch.active(65),"MIDI Reset All Controllers left a stuck sustain note");
+        latch.receive(on);
+        latch.receive(juce::MidiMessage::allNotesOff(1));
+        check(!latch.active(65),"All Notes Off failed to release a held note");
+        latch.receive(on);
+        latch.reset();
+        check(!latch.active(65),"MIDI state reset failed");
+        ++cases;
+    }
+    {
+        float centre=steadyPitchCentre(-1.f,60.2f);
+        check(centre==60.f,"Pitch view did not initialise to a stable note");
+        check(steadyPitchCentre(centre,64.f)==centre,"Vibrato pans the entire pitch graph");
+        check(steadyPitchCentre(centre,-1.f)==centre,"Silence pans the pitch graph");
+        const float moved=steadyPitchCentre(centre,72.f);
+        check(moved>centre && moved-centre<.41f,"Large jump changes the pitch axis abruptly");
+        for(int i=0;i<60;++i)centre=steadyPitchCentre(centre,72.f);
+        check(std::abs(centre-67.5f)<.1f,"Pitch viewport does not settle inside stable margins");
+        ++cases;
+    }
+    {
+        // FFT snapshots must be ordered, aligned and independent of the ring's
+        // current writer slot after wraparound.
+        AnalysisTap tap;
+        const int count=int(AnalysisTap::capacity+AnalysisTap::size+256);
+        for(int i=0;i<count;++i)
+        {
+            tap.push(float(i)*.0001f,-float(i)*.0002f);
+            if((i+1)%128==0)tap.publish();
+        }
+        tap.publish();
+        check(tap.sequence()==uint64_t(count),"Analysis sample clock is incorrect");
+        std::array<float,AnalysisTap::size> a{},b{};
+        tap.copy(a,b);
+        for(size_t i=0;i<a.size();++i)
+        {
+            const int original=count-int(AnalysisTap::size)+int(i);
+            check(a[i]==float(original)*.0001f && b[i]==-float(original)*.0002f,
+                  "Analysis FFT snapshot is wrapped, torn or misaligned");
+        }
+        ++cases;
+    }
+    {
+        // A vocal hard-panned right should still drive the analyzer rather
+        // than displaying an empty left-channel spectrum.
+        JerzyAutoTuneAudioProcessor p;
+        dry(p);set(p,"masterEnabled",0);
+        p.prepareToPlay(48000,128);
+        juce::AudioBuffer<float> block(2,128);juce::MidiBuffer midi;
+        for(int n=0;n<120;++n)
+        {
+            for(int i=0;i<128;++i)
+            {
+                block.setSample(0,i,0.f);
+                block.setSample(1,i,.4f*std::sin(float(n*128+i)*.019f));
+            }
+            p.processBlock(block,midi);
+        }
+        std::array<float,2048> in{},out{};
+        p.copyAnalysis(in,out);
+        float peak=0,error=0;
+        for(size_t i=0;i<in.size();++i)
+        {
+            peak=std::max(peak,std::abs(in[i]));
+            error=std::max(error,std::abs(in[i]-out[i]));
+        }
+        check(peak>.25f && error<1.e-6f,
+              "Right-channel vocal is invisible or not latency-aligned in the spectrum");
+        ++cases;
+    }
+    {
+        // Prove that the output FFT reads sound AFTER saturation, and not the
+        // old spectral-prep intermediate that used to be mislabeled as OUT.
+        JerzyAutoTuneAudioProcessor p;
+        dry(p);set(p,"masterEnabled",1);set(p,"satEnabled",1);
+        set(p,"satMix",100);set(p,"satDrive",18);
+        p.prepareToPlay(48000,128);
+        juce::AudioBuffer<float> block(2,128);juce::MidiBuffer midi;
+        for(int n=0;n<170;++n)
+        {
+            for(int i=0;i<128;++i)
+            {
+                const float sample=.35f*std::sin(float(n*128+i)*.027f);
+                block.setSample(0,i,sample);block.setSample(1,i,sample);
+            }
+            p.processBlock(block,midi);
+        }
+        std::array<float,2048> in{},out{};
+        p.copyAnalysis(in,out);
+        float difference=0,maximum=0;
+        for(size_t i=0;i<in.size();++i)
+        {
+            difference=std::max(difference,std::abs(in[i]-out[i]));
+            maximum=std::max(maximum,std::abs(out[i]));
+        }
+        check(maximum>.05f && difference>.05f,
+              "Output FFT tap is not following the final saturated audio path");
+        ++cases;
+    }
+    {
+        // The visualizer must use the FINAL processor output and a latency-aligned
+        // dry reference, so a real master bypass plots coincident signals.
+        JerzyAutoTuneAudioProcessor p;
+        dry(p);set(p,"masterEnabled",0);
+        p.prepareToPlay(48000,128);
+        juce::AudioBuffer<float> block(2,128);juce::MidiBuffer midi;
+        for(int n=0;n<100;++n)
+        {
+            for(int i=0;i<128;++i)
+            {
+                const float sample=.35f*std::sin(float(n*128+i)*.017f);
+                block.setSample(0,i,sample);
+                block.setSample(1,i,sample);
+            }
+            p.processBlock(block,midi);
+        }
+        std::array<float,2048> in{},out{};
+        p.copyAnalysis(in,out);
+        float maxError=0,signal=0;
+        for(size_t i=0;i<in.size();++i)
+        {
+            maxError=std::max(maxError,std::abs(in[i]-out[i]));
+            signal=std::max(signal,std::abs(in[i]));
+        }
+        check(signal>.2f && maxError<1.e-6f,"Final visualizer bypass is not latency-aligned");
+        check(p.consumeInputMeterPeak()>.3f,"Input meter peak was not aggregated");
+        check(p.consumeOutputMeterPeak()>.3f,"Output meter peak was not aggregated");
+        check(p.consumeInputMeterPeak()==0 && p.consumeOutputMeterPeak()==0,
+              "UI peak accumulator did not clear on consume");
+        ++cases;
+    }
     {
         const float below=Compressor::gainReduction(std::nextafter(3.f,0.f),3,6),at=Compressor::gainReduction(3,3,6),above=Compressor::gainReduction(std::nextafter(3.f,4.f),3,6);
         check(std::abs(at-2.f)<1.e-5f&&std::abs(at-below)<1.e-5f&&std::abs(above-at)<1.e-5f,"Soft knee has a discontinuity at its upper boundary");++cases;
@@ -81,7 +310,10 @@ void runStudioTests()
     {
         JerzyAutoTuneAudioProcessor a,b;dry(a);dry(b);set(b,"comp2Enabled",1);set(b,"comp2Threshold",-30);set(b,"comp2Ratio",4);
         const auto bypass=render(a,48000),compressed=render(b,48000);
-        check(energy(compressed,24000)<energy(bypass,24000)*.6,"Second compressor does not independently compress audio");++cases;
+        check(energy(compressed,24000)<energy(bypass,24000)*.6,"Second compressor does not independently compress audio");
+        check(b.consumeStageBReduction()>.5f,"Live compressor stage B telemetry is missing");
+        check(b.consumeStageBReduction()==0,"Live compressor GR peak was not cleared after UI read");
+        ++cases;
     }
     {
         JerzyAutoTuneAudioProcessor a,b;dry(a);dry(b);
@@ -104,6 +336,30 @@ void runStudioTests()
         float firstL=0,firstR=0,secondR=0;
         for(int i=0;i<25000;++i){float l=i==0?1.f:0,r=0;delay.process(l,r);if(i==12000){firstL=l;firstR=r;}if(i==24000)secondR=r;}
         check(firstL>.24f&&std::abs(firstR)<1.e-7f&&secondR>.01f,"Tempo-synced ping-pong delay routing/time incorrect");++cases;
+    }
+    {
+        // A never-enabled Space must be exactly dry and must remain safe to
+        // activate later without leaking samples from its disabled history.
+        Space idle; idle.prepare(48000);
+        for (int i=0;i<48000;++i)
+        {
+            const float originalL=.3f*std::sin(float(i)*.011f);
+            const float originalR=.2f*std::cos(float(i)*.019f);
+            float l=originalL,r=originalR;
+            idle.process(l,r);
+            check(l==originalL && r==originalR,"Idle Space modifies the bypassed signal");
+        }
+        idle.settings.delay=true;idle.settings.delayMix=100;idle.settings.duck=0;
+        idle.configure(120);
+        float delayed=0;
+        for(int i=0;i<=12000;++i)
+        {
+            float l=i==0?1.f:0.f,r=0.f;
+            idle.process(l,r);
+            if(i==12000)delayed=l;
+        }
+        check(delayed>.49f,"Space fails to start after an extended disabled interval");
+        ++cases;
     }
     {
         Space delay;delay.settings.delay=true;delay.settings.delayMix=100;delay.settings.duck=0;delay.prepare(48000);delay.configure(120);float echo=0;
@@ -135,6 +391,57 @@ void runStudioTests()
         check(d.key==0&&!d.minor,"Key suggestion fails reference C-major phrase");++cases;
     }
     {
+        // Master bypass must be a true PDC-aligned fast path after the fade
+        // settles. Re-enabling cannot mute output while pitch DSP warms up.
+        JerzyAutoTuneAudioProcessor p;
+        dry(p);set(p,"masterEnabled",0);
+        p.prepareToPlay(48000,128);
+        const int latency=p.getLatencySamples();
+        juce::AudioBuffer<float> b(2,128);juce::MidiBuffer midi;
+        for(int block=0;block<145;++block)
+        {
+            for(int i=0;i<128;++i)
+            {
+                const int n=block*128+i;
+                const float sample=.3f*std::sin(float(n)*.021f);
+                b.setSample(0,i,sample);b.setSample(1,i,sample);
+            }
+            p.processBlock(b,midi);
+            if(block>latency/128+2)
+            {
+                for(int i=0;i<128;++i)
+                {
+                    const int source=block*128+i-latency;
+                    const float reference=.3f*std::sin(float(source)*.021f);
+                    check(std::abs(b.getSample(0,i)-reference)<1.e-5f,
+                          "Sleeping master bypass corrupted dry audio or its PDC");
+                }
+            }
+        }
+        set(p,"masterEnabled",1);
+        float smallestBlockPeak=1.f;
+        for(int block=0;block<180;++block)
+        {
+            float peak=0;
+            for(int i=0;i<128;++i)
+            {
+                const int n=(145+block)*128+i;
+                const float sample=.3f*std::sin(float(n)*.021f);
+                b.setSample(0,i,sample);b.setSample(1,i,sample);
+            }
+            p.processBlock(b,midi);
+            for(int i=0;i<128;++i)
+            {
+                const float sample=b.getSample(0,i);
+                check(std::isfinite(sample),"Nonfinite audio on master DSP wake");
+                peak=std::max(peak,std::abs(sample));
+            }
+            smallestBlockPeak=std::min(smallestBlockPeak,peak);
+        }
+        check(smallestBlockPeak>.05f,"Master rewarm caused an audible dropout");
+        ++cases;
+    }
+    {
         JerzyAutoTuneAudioProcessor p;dry(p);set(p,"masterEnabled",0);p.prepareToPlay(48000,128);
         juce::AudioBuffer<float> b(2,128);juce::MidiBuffer midi;int peak=-1;
         for(int block=0;block<p.getLatencySamples()/128+3;++block)
@@ -153,6 +460,87 @@ void runStudioTests()
         check(restored.hasNoiseProfile(),"Saved noise profile was not restored");
         auto tree=restored.parameters.copyState();tree.setProperty("noiseProfile","invalid",nullptr);auto xml=tree.createXml();juce::MemoryBlock invalid;juce::AudioProcessor::copyXmlToBinary(*xml,invalid);
         restored.setStateInformation(invalid.getData(),int(invalid.getSize()));check(!restored.hasNoiseProfile(),"Malformed profile retained stale learned noise");++cases;
+    }
+    // Optional, informational measurement: no unstable wall-clock threshold gates CI.
+    // Use JERZY_DSP_BENCHMARK=1 to compare the real disabled and active Space paths.
+    if (std::getenv("JERZY_DSP_BENCHMARK") != nullptr)
+    {
+        constexpr int frames=48000*4;
+        for (bool enabled : {false,true})
+        {
+            Space s;
+            s.settings.reverb=enabled;s.settings.delay=enabled;s.settings.duck=0;
+            s.settings.reverbMix=40;s.settings.delayMix=40;
+            s.prepare(48000);
+            float checksum=0;
+            const auto begin=std::chrono::steady_clock::now();
+            for (int i=0;i<frames;++i)
+            {
+                float l=.2f*std::sin(float(i)*.012f),r=.2f*std::cos(float(i)*.015f);
+                s.process(l,r);checksum+=l+r;
+            }
+            const auto elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();
+            std::cout<<"BENCH Space "<<(enabled?"reverb+delay":"virgin-off")<<": "
+                     <<elapsed<<" ms / "<<frames<<" frames, checksum "<<checksum<<"\n";
+        }
+    }
+    if (std::getenv("JERZY_DSP_BENCHMARK") != nullptr)
+    {
+        // Diagnostic, not a pass/fail threshold: a 10 kHz tone produces an
+        // 18 kHz aliased third harmonic at fs=48 kHz if saturation aliases.
+        JerzyAutoTuneAudioProcessor untreated,coloured;
+        dry(untreated);dry(coloured);
+        set(coloured,"satEnabled",1);set(coloured,"satDrive",18);set(coloured,"satMix",100);
+        const auto base=render(untreated,48000,10000);
+        const auto driven=render(coloured,48000,10000);
+        const double baseAlias=toneAmplitude(base,18000);
+        const double drivenAlias=toneAmplitude(driven,18000);
+        const double fundamental=toneAmplitude(driven,10000);
+        std::cout<<"QUALITY Saturation 48kHz / 10kHz: clean alias "
+                 <<baseAlias<<", driven alias "<<drivenAlias
+                 <<", alias/fundamental "
+                 <<20*std::log10(std::max(1.e-12,drivenAlias/std::max(1.e-12,fundamental)))
+                 <<" dBc (higher is worse)\n";
+    }
+    if (std::getenv("JERZY_DSP_BENCHMARK") != nullptr)
+    {
+        // End-to-end timing includes the real host callback, not simulated
+        // isolated DSP. Results are diagnostic, never CI pass thresholds.
+        for(int mode=0;mode<3;++mode)
+        {
+            JerzyAutoTuneAudioProcessor p;
+            dry(p);
+            if(mode==0)set(p,"masterEnabled",0);
+            if(mode==2)
+            {
+                set(p,"tuneEnabled",1);set(p,"mix",100);
+                set(p,"satEnabled",1);set(p,"satDrive",18);
+                set(p,"compEnabled",1);set(p,"reverbEnabled",1);
+                set(p,"delayEnabled",1);set(p,"voiceEnabled",1);
+                set(p,"limiterEnabled",1);
+            }
+            p.prepareToPlay(48000,128);
+            juce::AudioBuffer<float> block(2,128);juce::MidiBuffer midi;
+            float checksum=0;
+            const auto begin=std::chrono::steady_clock::now();
+            constexpr int total=128*750;
+            for(int n=0;n<750;++n)
+            {
+                for(int i=0;i<128;++i)
+                {
+                    const float sample=.3f*std::sin(float(n*128+i)*.031f);
+                    block.setSample(0,i,sample);block.setSample(1,i,sample);
+                }
+                p.processBlock(block,midi);
+                checksum+=block.getSample(0,n%128);
+            }
+            const auto elapsed=std::chrono::duration<double,std::milli>(
+                std::chrono::steady_clock::now()-begin).count();
+            std::cout<<"BENCH FullProcessor "
+                     <<(mode==0?"master-bypass":mode==1?"effects-off":"effects-on")
+                     <<": "<<elapsed<<" ms / "<<total
+                     <<" frames, checksum "<<checksum<<"\n";
+        }
     }
     std::cout<<"PASS: "<<cases<<" studio audio regressions (WOLA, learned noise, dynamics, sibilance, reverb, delay, choir, harmony, MIDI, key, master bypass)\n";
 }

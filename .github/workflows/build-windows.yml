@@ -30,6 +30,12 @@ jobs:
         run: |
           ctest --test-dir build -C Release --output-on-failure 2>&1 | Tee-Object tests.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: DSP microbenchmark (informational)
+        shell: pwsh
+        run: |
+          $env:JERZY_DSP_BENCHMARK = '1'
+          ctest --test-dir build -C Release -V -R autotune_gui_and_parameters 2>&1 | Tee-Object benchmark.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify native binary and metadata
         shell: pwsh
         run: |
@@ -108,23 +114,42 @@ jobs:
             dist/SHA256.txt
           if-no-files-found: error
           retention-days: 90
-      - name: Publish tested installer download
+      - name: Publish verified 3.0.1 stable installer
+        # One-time production release: requires an explicitly marked merge commit.
+        # Ordinary main pushes and PR runs continue to validate without publishing.
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[publish-v3.0.1]')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $setup = (Get-ChildItem dist/*Setup.exe | Select-Object -First 1).FullName
+          $line = (Get-Content dist/SHA256.txt -Raw).Trim()
+          $expected = ($line -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "Installer checksum mismatch; refusing release" }
+          if ((Get-ChildItem dist/*Setup.exe).Count -ne 1) { throw "Expected exactly one installer" }
+          Write-Host "Verified installer SHA256: $actual"
           Copy-Item build/gui-previews/studio-0-focus.png dist/JerzyVocalStudio-3.0.1-Tune.png
           Compress-Archive -Path build/gui-previews/studio-*.png -DestinationPath dist/JerzyVocalStudio-3.0.1-GUI.zip
-          $tag = 'v3.0.1-rc2'
+          $tag = 'v3.0.1'
+          # Never replace a release or retarget an already-existing Git tag.
+          # Matching-refs returns HTTP 200 even when no exact tag exists,
+          # avoiding a native-command error on an expected HTTP 404.
+          $matchingRefs = gh api "repos/$env:GITHUB_REPOSITORY/git/matching-refs/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Could not validate existing release tag" }
+          if (@($matchingRefs | Where-Object { $_.ref -eq "refs/tags/$tag" }).Count -gt 0) {
+            throw "Tag $tag already exists; refusing release overwrite or retag"
+          }
           $notes = @'
-          Native Windows x64 VST3 installer with rebuilt Steel Studio UI: metallic chassis, icon navigation, large knobs, embedded Barlow fonts, brighter labels and live signal displays.
-          GUI screenshots are real native Windows captures driven by a synthetic audio test signal, not design mockups.
-          Automated native audio/GUI tests, pluginval strictness 5, installation, installed-plugin validation and uninstallation completed in this workflow before publication.
-          Close your DAW before installation and rescan VST3 plugins. Host-visible name: JERZY AUTO TUNE. Back up projects before replacing an earlier version.
-          FL Studio listening and saved-project recall require manual verification; this is a release candidate. Unsigned installer; no code-signing certificate is configured.
+          Jerzy Vocal Studio 3.0.1 — Windows 10/11 x64 VST3 (JERZY AUTO TUNE).
+          Included: pitch detection and tuning, real-time visualizer fixes, ADAA saturation to reduce aliasing, 4x intersample-aware output limiter, stable MIDI/sustain state during CPU-saving master bypass, noise, harmony and dual dynamics.
+          Quality checks for THIS exact commit: native Windows Release build; both CTest regression suites including MIDI/bypass and independent 8x true-peak reconstruction; pluginval 1.0.4 strictness 5; installed VST3 validation; upgrade from 3.0.0 RC1; clean uninstall. The current workflow has to pass all steps before this release is published.
+          Attached: actual Windows x64 installer, installer SHA256 checksum, native GUI captures. Synthetic visualizer test screenshots are not recordings of real users.
+          Limitations: true peak is estimated by finite 4x FIR interpolation; not certified ITU-R BS.1770. Windows Server CI does not constitute manual qualification of FL Studio saved-project recall, listening quality, automation, host PDC or high-DPI behavior.
+          IMPORTANT: back up DAW projects and presets, close the DAW before installing, then rescan VST3. Installer is UNSIGNED because no code-signing certificate is configured.
           '@
           $notes | Set-Content release-notes.txt -Encoding utf8
-          gh release create $tag dist/*Setup.exe dist/SHA256.txt dist/*Tune.png dist/*GUI.zip --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title 'Jerzy Vocal Studio 3.0.1 RC2 — Windows x64 VST3' --notes-file release-notes.txt
+          gh release create $tag dist/*Setup.exe dist/SHA256.txt dist/*Tune.png dist/*GUI.zip --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --latest --title 'Jerzy Vocal Studio 3.0.1 — Windows x64 VST3' --notes-file release-notes.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish diagnostic report
         if: always()

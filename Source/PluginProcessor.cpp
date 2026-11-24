@@ -182,8 +182,9 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
     spectralPrep->prepare(sampleRate); space.prepare(sampleRate); choir.prepare(sampleRate);
     stageA.prepare(sampleRate); stageB.prepare(sampleRate);
     keyDetector.reset(); suggestedKey.store(-1); suggestedConfidence.store(0);
-    heldMidi.fill(false); sustainedMidi.fill(false); sustainPedal=false;sampleClock=0;
+    midiLatch.reset();sampleClock=0;
     hardLow={};hardHigh={};hardEnvelope={};satPrevious={};satDc={};
+    for(auto& shaper:saturator)shaper.reset();
     stageBFade.reset(sampleRate,.010);stageBFade.setCurrentAndTargetValue(parameters.getRawParameterValue("comp2Enabled")->load());
     masterFade.reset(sampleRate,.010);masterFade.setCurrentAndTargetValue(parameters.getRawParameterValue("masterEnabled")->load());
     harmonyFade.reset(sampleRate,.020);harmonyFade.setCurrentAndTargetValue(0);
@@ -250,6 +251,7 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
     setLatencySamples(latency + finalLimiter.latency() + spectralPrep->latency());
     masterRingLength=getLatencySamples()+262144;
     masterDelay.setSize(channels,masterRingLength); masterDelay.clear();masterWrite=0;
+    masterAsleep=false;masterRewarm=0;
     dryDelayLength = latency + maximumBlockSize + 1;
     dryDelayBuffer.setSize(channels, dryDelayLength, false, true, true);
     dryDelayBuffer.clear();
@@ -265,6 +267,10 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
 
     inputPeak.store(0.0f, std::memory_order_relaxed);
     outputPeak.store(0.0f, std::memory_order_relaxed);
+    inputMeterPeak.store(0.0f, std::memory_order_relaxed);
+    outputMeterPeak.store(0.0f, std::memory_order_relaxed);
+    compressorReductionMeter.store(0.0f, std::memory_order_relaxed);
+    stageBReductionMeter.store(0.0f, std::memory_order_relaxed);
     displayPitch.store(-1.0f, std::memory_order_relaxed);
     displayCorrection.store(0.0f, std::memory_order_relaxed);
     compressorReduction.store(0.0f, std::memory_order_relaxed);
@@ -398,6 +404,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     const float gateThreshold = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("gateThreshold")->load());
     const float gateRange = juce::Decibels::decibelsToGain(-parameters.getRawParameterValue("gateRange")->load());
     const float gateAttack = coeffFromMs(parameters.getRawParameterValue("gateAttack")->load(), currentSampleRate);
+    const float gateDetectorAttack = coeffFromMs(2.0f, currentSampleRate);
     const float gateRelease = coeffFromMs(parameters.getRawParameterValue("gateRelease")->load(), currentSampleRate);
     const int gateHold = static_cast<int>(parameters.getRawParameterValue("gateHold")->load() * 0.001f * static_cast<float>(currentSampleRate));
 
@@ -405,6 +412,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     const float noiseThreshold = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("noiseThreshold")->load());
     const float noiseReduction = juce::Decibels::decibelsToGain(-parameters.getRawParameterValue("noiseReduction")->load());
     const float noiseRelease = coeffFromMs(parameters.getRawParameterValue("noiseRelease")->load(), currentSampleRate);
+    const float noiseDetectorAttack = coeffFromMs(5.0f, currentSampleRate);
     const float hpHz = parameters.getRawParameterValue("noiseHighPass")->load();
     const float hpA = std::exp(-juce::MathConstants<float>::twoPi * hpHz / static_cast<float>(currentSampleRate));
 
@@ -417,6 +425,8 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
 
     const bool satOn = parameters.getRawParameterValue("satEnabled")->load() >= 0.5f;
     const float satDrive = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("satDrive")->load());
+    const float satDriveNormaliser = 1.f / std::tanh(juce::jmax(1.f, satDrive));
+    const float satShapeNormaliser = 1.f / std::max(1.f, std::sqrt(satDrive));
     const float satTone = parameters.getRawParameterValue("satTone")->load() * 0.01f;
     const float satMix = parameters.getRawParameterValue("satMix")->load() * 0.01f;
     const float satOutput = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("satOutput")->load());
@@ -463,6 +473,8 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     const float hardB=std::exp(-2*juce::MathConstants<float>::pi*9000.f/float(currentSampleRate));
     const float hardRelease=coeffFromMs(40,currentSampleRate),satDcCoeff=std::exp(-2*juce::MathConstants<float>::pi*12.f/float(currentSampleRate));
     const int saturationModel=advanced?int(value("satModel")):0;
+    const float satShape=saturationModel==1?.15f:.38f;
+    const float satShapeOffset=std::tanh(satShape);
 
     for (int ch = 0; ch < channels; ++ch)
     {
@@ -496,7 +508,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
             {
                 const float dry = x;
                 const float level = std::abs(x);
-                const float envCoeff = level > gateEnvelope[ci] ? coeffFromMs(2.0f, currentSampleRate) : gateRelease;
+                const float envCoeff = level > gateEnvelope[ci] ? gateDetectorAttack : gateRelease;
                 gateEnvelope[ci] = envCoeff * gateEnvelope[ci] + (1.0f - envCoeff) * level;
                 if (gateEnvelope[ci] >= gateThreshold)
                     gateHoldSamples[ci] = gateHold;
@@ -517,8 +529,7 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
                 noisePrevInput[ci] = x;
                 noiseHpState[ci] = hp;
                 const float e = std::abs(hp);
-                const float attack = coeffFromMs(5.0f, currentSampleRate);
-                const float ec = e > noiseEnvelope[ci] ? attack : noiseRelease;
+                const float ec = e > noiseEnvelope[ci] ? noiseDetectorAttack : noiseRelease;
                 noiseEnvelope[ci] = ec * noiseEnvelope[ci] + (1.0f - ec) * e;
                 const float t = juce::jlimit(0.0f, 1.0f, noiseEnvelope[ci] / juce::jmax(1.0e-7f, noiseThreshold));
                 const float suppress = noiseReduction + (1.0f - noiseReduction) * t;
@@ -548,22 +559,34 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
                 x = dry + (x-dry)*wet[2];
             }
 
-            if (advanced || satOn)
+            if (satOn || wet[3]>1.e-6f)
             {
                 const float dry = x;
                 satToneLow[ci] = (1.0f - toneA) * x + toneA * satToneLow[ci];
                 const float low = satToneLow[ci];
                 const float high = x - low;
                 const float pre = low * (1.0f - 0.35f * satTone) + high * (1.0f + 0.35f * satTone);
-                float driven = std::tanh(pre * satDrive) / std::tanh(juce::jmax(1.0f, satDrive));
+                // ADAA: the two selectable saturation shapes share one
+                // antialiased shaper, with independent channel history.
+                const float shaped=saturator[ci].process(
+                    pre,satDrive,saturationModel>0?satShape:0.f);
+                float driven=shaped*satDriveNormaliser;
                 if(saturationModel>0)
                 {
-                    const float shape=saturationModel==1?.15f:.38f;
-                    const float coloured=(std::tanh(pre*satDrive+shape)-std::tanh(shape))/std::max(1.f,std::sqrt(satDrive));
-                    driven=coloured-satPrevious[ci]+satDcCoeff*satDc[ci];satPrevious[ci]=coloured;satDc[ci]=driven;
+                    const float coloured=(shaped-satShapeOffset)*satShapeNormaliser;
+                    driven=coloured-satPrevious[ci]+satDcCoeff*satDc[ci];
+                    satPrevious[ci]=coloured;satDc[ci]=driven;
                 }
                 x = (x + (driven - x) * satMix) * satOutput;
                 x = dry + (x-dry)*wet[3];
+            }
+            else
+            {
+                // Do not run log/exp antialias mathematics while completely
+                // bypassed. Prime filter state from current input on reentry.
+                saturator[ci].reset();
+                satToneLow[ci]=x;
+                satPrevious[ci]=satDc[ci]=0.f;
             }
 
             doublerBuffer.setSample(ch, doublerWrite, x);
@@ -655,6 +678,12 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     }
     compressorReduction.store(blockReduction, std::memory_order_relaxed);
     stageBReduction.store(blockBReduction,std::memory_order_relaxed);
+    const auto recordReduction=[](std::atomic<float>& meter,float next) noexcept {
+        float old=meter.load(std::memory_order_relaxed);
+        while(old<next && !meter.compare_exchange_weak(old,next,std::memory_order_relaxed)) {}
+    };
+    recordReduction(compressorReductionMeter,blockReduction);
+    recordReduction(stageBReductionMeter,blockBReduction);
 }
 
 void JerzyAutoTuneAudioProcessor::collectPitch(const juce::AudioBuffer<float>& buffer,int offset,int count) noexcept
@@ -700,7 +729,81 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
     const int channels = juce::jmin(buffer.getNumChannels(), stretchedBuffer.getNumChannels());
     const int samples = buffer.getNumSamples();
+    if(channels<=0 || samples<=0)return;
 
+    const bool masterRequested=parameters.getRawParameterValue("masterEnabled")->load()>=.5f;
+    // Once the smoothed master crossfade has reached fully DRY, maintain only
+    // the PDC-aligned input delay, signal tap and meters. The pitch estimator,
+    // spectral transform, stretchers and effect graph consume no CPU here.
+    if(!masterRequested && !masterFade.isSmoothing()
+       && masterFade.getCurrentValue()<=1.e-6f)
+    {
+        masterAsleep=true;
+        // The DSP graph sleeps, but MIDI still changes while bypassed.
+        // Tracking notes and pedal changes avoids stuck harmonies on wake.
+        for(const auto metadata:midi)
+            if(metadata.numBytes<=3)midiLatch.receive(metadata.getMessage());
+        float inMax=0.f,outMax=0.f;
+        // Keep a stable analyzer source for the entire block; choose it
+        // from the audible, PDC-DELAYED output instead of future dry input.
+        for(int i=0;i<samples;++i)
+        {
+            const int read=(masterWrite-getLatencySamples()+masterRingLength)%masterRingLength;
+            float input[2]={},output[2]={};
+            for(int ch=0;ch<channels;++ch)
+            {
+                const float raw=buffer.getSample(ch,i);
+                input[ch]=std::isfinite(raw)?juce::jlimit(-32.f,32.f,raw):0.f;
+                masterDelay.setSample(ch,masterWrite,input[ch]);
+                inMax=juce::jmax(inMax,std::abs(input[ch]));
+            }
+            for(int ch=0;ch<channels;++ch)
+            {
+                output[ch]=masterDelay.getSample(ch,read);
+                buffer.setSample(ch,i,output[ch]);
+                outMax=juce::jmax(outMax,std::abs(output[ch]));
+            }
+            masterWrite=(masterWrite+1)%masterRingLength;
+        }
+        double leftEnergy=0,rightEnergy=0;
+        if(channels==2)
+            for(int i=0;i<samples;++i)
+            {
+                leftEnergy+=std::abs(buffer.getSample(0,i));
+                rightEnergy+=std::abs(buffer.getSample(1,i));
+            }
+        const int tapChannel=channels==2&&rightEnergy>leftEnergy*2.0?1:0;
+        for(int i=0;i<samples;++i)
+        {
+            const float sample=buffer.getSample(tapChannel,i);
+            analysis.push(sample,sample);
+        }
+        analysis.publish();
+        if(inMax>=1.f)inputOverload.store(juce::jmax(inputOverload.load(),inMax));
+        if(outMax>=1.f)outputOverload.store(juce::jmax(outputOverload.load(),outMax));
+        const auto record=[](std::atomic<float>& meter,float value) noexcept {
+            float old=meter.load(std::memory_order_relaxed);
+            while(old<value && !meter.compare_exchange_weak(old,value,std::memory_order_relaxed)) {}
+        };
+        record(inputMeterPeak,inMax);record(outputMeterPeak,outMax);
+        inputPeak.store(inMax,std::memory_order_relaxed);
+        outputPeak.store(outMax,std::memory_order_relaxed);
+        compressorReduction.store(0.f,std::memory_order_relaxed);
+        stageBReduction.store(0.f,std::memory_order_relaxed);
+        displayPitch.store(-1.f,std::memory_order_relaxed);
+        displayCorrection.store(0.f,std::memory_order_relaxed);
+        displayTarget.store(-1.f,std::memory_order_relaxed);
+        displayConfidence.store(0.f,std::memory_order_relaxed);
+        return;
+    }
+    if(masterRequested && masterAsleep)
+    {
+        masterAsleep=false;
+        // Keep wet closed until the frozen spectral/pitch state has been
+        // completely replaced with recent input. No allocation or reset.
+        masterRewarm=juce::jmax(getLatencySamples()+4096,int(currentSampleRate*.08));
+        masterFade.setCurrentAndTargetValue(0.f);
+    }
     advanced=parameters.getRawParameterValue("engineMode")->load()>=.5f;
     if(!advanced) displayConfidence.store(0,std::memory_order_relaxed);
     if(auto* head=getPlayHead())if(auto position=head->getPosition())if(auto bpm=position->getBpm())tempo.store(*bpm);
@@ -720,11 +823,10 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             blockInputPeak=juce::jmax(blockInputPeak,std::abs(input[size_t(ch)]));
         }
         if(channels==1)input[1]=input[0];
-        const float raw=input[0];spectralPrep->process(input[0],input[1],fundamental);analysis.push(raw,input[0]);
+        spectralPrep->process(input[0],input[1],fundamental);
         for(int ch=0;ch<channels;++ch)buffer.setSample(ch,i,input[size_t(ch)]);
         masterWrite=(masterWrite+1)%masterRingLength;
     }
-    analysis.publish();
     if(blockInputPeak>=1.f)inputOverload.store(juce::jmax(inputOverload.load(),blockInputPeak));
     mixSmoother.setTargetValue(value("tuneEnabled")>.5f?value("mix")*.01f:0.f);
     const bool harmonyActive=advanced&&value("harmonyEnabled")>.5f;
@@ -748,11 +850,7 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         {
             if((*midiIt).numBytes>3){++midiIt;continue;}
             const auto message=(*midiIt).getMessage();++midiIt;
-            if(message.isNoteOn()){heldMidi[size_t(message.getNoteNumber())]=true;sustainedMidi[size_t(message.getNoteNumber())]=false;}
-            if(message.isNoteOff()){const auto n=size_t(message.getNoteNumber());heldMidi[n]=false;sustainedMidi[n]=sustainPedal;}
-            if(message.isSustainPedalOn())sustainPedal=true;
-            if(message.isSustainPedalOff()){sustainPedal=false;sustainedMidi.fill(false);}
-            if(message.isAllNotesOff()||message.isAllSoundOff()){heldMidi.fill(false);sustainedMidi.fill(false);}
+            midiLatch.receive(message);
         }
     };
     const auto harmonyRatio=[&](size_t v,const std::array<int,4>& notes)
@@ -793,7 +891,7 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             if(harmonyActive)
             {
                 std::array<const float*,2> in{};for(int ch=0;ch<channels;++ch)in[size_t(ch)]=buffer.getReadPointer(ch,offset);
-                std::array<int,4> notes{-1,-1,-1,-1};int n=0;for(int k=0;k<128&&n<4;++k)if(heldMidi[size_t(k)]||sustainedMidi[size_t(k)])notes[size_t(n++)]=k;
+                std::array<int,4> notes{-1,-1,-1,-1};int n=0;for(int k=0;k<128&&n<4;++k)if(midiLatch.active(k))notes[size_t(n++)]=k;
                 for(size_t v=0;v<4;++v)
                 {
                     harmonyEngines[v]->setTransposeFactor(harmonyRatio(v,notes));
@@ -852,7 +950,7 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
         stretcher.process(inputPointers.data(), count, outputPointers.data(), count);
         std::array<int,4> midiNotes{-1,-1,-1,-1};int noteCount=0;
-        for(int n=0;n<128&&noteCount<4;++n)if(heldMidi[size_t(n)]||sustainedMidi[size_t(n)])midiNotes[size_t(noteCount++)]=n;
+        for(int n=0;n<128&&noteCount<4;++n)if(midiLatch.active(n))midiNotes[size_t(noteCount++)]=n;
         if(harmonyActive || harmonyFade.getCurrentValue()>1.e-5f)
         {
             for(size_t v=0;v<4;++v)
@@ -897,7 +995,9 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     processVocalChain(buffer);
 
-    masterFade.setTargetValue(value("masterEnabled"));
+    const bool warming=masterRequested && masterRewarm>0;
+    masterFade.setTargetValue(masterRequested&&!warming?1.f:0.f);
+    if(warming)masterRewarm=juce::jmax(0,masterRewarm-samples);
     float blockOutputPeak=0;
     for(int i=0;i<samples;++i)
     {
@@ -907,11 +1007,23 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         {
             const float dry=masterDelay.getSample(ch,read),processed=buffer.getSample(ch,i);
             const float output=dry+(processed-dry)*wet;buffer.setSample(ch,i,output);
+            // Align the displayed input with the actually audible FINAL output.
+            // Use the vocal pitch detector's stable dominant-channel selection.
+            // A right-only stereo vocal must not produce a flat spectrum.
+            if(ch==juce::jlimit(0,channels-1,detectorChannel))analysis.push(dry,output);
             blockOutputPeak=juce::jmax(blockOutputPeak,std::abs(output));
         }
     }
     if(blockOutputPeak>=1.f)outputOverload.store(juce::jmax(outputOverload.load(),blockOutputPeak));
 
+    // Accumulate the true peak of ALL callbacks between GUI refreshes.
+    const auto recordPeak=[](std::atomic<float>& meter,float next) noexcept {
+        float old=meter.load(std::memory_order_relaxed);
+        while(old<next && !meter.compare_exchange_weak(old,next,std::memory_order_relaxed)) {}
+    };
+    recordPeak(inputMeterPeak,blockInputPeak);
+    recordPeak(outputMeterPeak,blockOutputPeak);
+    analysis.publish();
     inputPeak.store(blockInputPeak, std::memory_order_relaxed);
     outputPeak.store(blockOutputPeak, std::memory_order_relaxed);
     displayPitch.store(detectedMidi, std::memory_order_relaxed);

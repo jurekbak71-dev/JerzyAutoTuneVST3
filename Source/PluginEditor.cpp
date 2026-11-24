@@ -332,20 +332,60 @@ juce::Rectangle<float> JerzyAutoTuneAudioProcessorEditor::plotBounds() const
 
 void JerzyAutoTuneAudioProcessorEditor::drawSpectrum(juce::Graphics& g,juce::Rectangle<float> r,bool showOutput)
 {
-    grid(g,r);const float fs=processor.graphRate.load();
-    for(int i=0;i<5;++i)text(g,juce::String(page==3?18-9*i:-18*i),{130,r.getY()+r.getHeight()*i/4-9,32,20},14,silver,juce::Justification::centred);
-    if(!expanded&&page!=3)text(g,"INPUT  /  SPECTRAL OUT",{166,r.getBottom()+29,600,24},16,silver);
+    grid(g,r);
+    const bool eqResponsePage=page==3;
+    for(int i=0;i<5;++i)
+        text(g,juce::String(eqResponsePage ? 18-9*i : -18*i),
+             {130,r.getY()+r.getHeight()*i/4-9,32,20},14,silver,juce::Justification::centred);
+
+    // An EQ gain curve uses +18..-18 dB. Overlaying an FFT on that axis
+    // previously mixed two incompatible dB scales and was misleading.
+    if(eqResponsePage)
+    {
+        if(!expanded)text(g,"EQ GAIN / dB",{170,r.getBottom()+27,320,23},16,silver);
+        return;
+    }
+
+    const auto inputColour=juce::Colour(133,185,177);
+    const auto outputColour=white;
+    const bool matched=showOutput && jerzy::studio::spectraNearlyEqual(spectrum,processedSpectrum);
+    if(!expanded)
+    {
+        if(matched)
+            text(g,"INPUT = FINAL OUTPUT  /  NO SIGNIFICANT CHANGE",
+                 {166,r.getBottom()+27,565,24},16,outputColour);
+        else
+        {
+            text(g,"INPUT SPECTRUM",{166,r.getBottom()+27,240,24},16,inputColour);
+            if(showOutput)text(g,"FINAL OUTPUT",{416,r.getBottom()+27,240,24},16,outputColour);
+        }
+    }
+    const float fs=juce::jmax(1.f,processor.graphRate.load());
+    juce::Graphics::ScopedSaveState clipping(g);
+    g.reduceClipRegion(r.toNearestInt());
     for(int pass=0;pass<(showOutput?2:1);++pass)
     {
-        juce::Path path;bool first=true;
+        if(matched && pass==0)continue; // show one clear line, not a doubled stroke
+        const auto& bins=pass==0?spectrum:processedSpectrum;
+        juce::Path path;
         for(int x=0;x<int(r.getWidth());++x)
         {
-            const float hz=xFrequency(r.getX()+float(x),r);const int bin=juce::jlimit(1,1024,int(hz*2048/fs));
-            const float y=juce::jlimit(r.getY(),r.getBottom(),dbY(pass==0?spectrum[size_t(bin)]:processedSpectrum[size_t(bin)],r));
-            if(first){path.startNewSubPath(r.getX()+float(x),r.getBottom());path.lineTo(r.getX()+float(x),y);first=false;}else path.lineTo(r.getX()+float(x),y);
+            const float hz=xFrequency(r.getX()+float(x),r);
+            const float fractionalBin=hz*2048.f/fs;
+            const int lower=juce::jlimit(1,1023,int(fractionalBin));
+            const float fraction=juce::jlimit(0.f,1.f,fractionalBin-float(lower));
+            const float magnitudeDb=bins[size_t(lower)]*(1.f-fraction)+bins[size_t(lower+1)]*fraction;
+            const float y=juce::jlimit(r.getY(),r.getBottom(),dbY(magnitudeDb,r));
+            if(x==0)path.startNewSubPath(r.getX(),y);
+            else path.lineTo(r.getX()+float(x),y);
         }
-        auto fill=path;fill.lineTo(r.getRight(),r.getBottom());fill.closeSubPath();g.setColour((pass==0?silver:white).withAlpha(pass==0?.15f:.06f));g.fillPath(fill);
-        g.setColour(pass==0?silver:white);g.strokePath(path,juce::PathStrokeType(pass==0?1.f:1.6f));
+        auto fill=path;
+        fill.lineTo(r.getRight(),r.getBottom());
+        fill.lineTo(r.getX(),r.getBottom());
+        fill.closeSubPath();
+        const auto colour=pass==0?inputColour:outputColour;
+        g.setColour(colour.withAlpha(pass==0?.11f:.07f));g.fillPath(fill);
+        g.setColour(colour);g.strokePath(path,juce::PathStrokeType(pass==0?1.4f:2.f));
     }
 }
 void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
@@ -370,8 +410,8 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
     if(page==0)
     {
         g.setColour(juce::Colour(11,16,16));g.fillRect(r);
-        const float pitch=processor.getDetectedPitch();const int centre=pitch>=0?int(std::round(pitch)):60;
-        for(int note=centre-6;note<=centre+6;++note)
+        const float pitch=processor.getDetectedPitch();const float centre=pitchViewCentre>=0.f?pitchViewCentre:60.f;
+        for(int note=int(std::floor(centre))-6;note<=int(std::ceil(centre))+6;++note)
         {
             const float y=r.getCentreY()-(note-centre)*r.getHeight()/12;
             if(y<r.getY()||y>r.getBottom())continue;
@@ -397,11 +437,11 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
             text(g,"CURRENT NOTE",{867,163,222,20},16,silver);
             const int note=juce::roundToInt(pitch);
             text(g,pitch<0?"--":juce::String(noteNames[(note%12+12)%12])+juce::String(note/12-1),{869,184,108,49},43);
-            text(g,juce::String(juce::roundToInt(processor.getCorrectionCents()))+" ct",{977,192,111,31},25);
+            text(g,juce::String(juce::roundToInt(correctionDisplayCents))+" ct",{977,192,111,31},25);
             for(int pass=0;pass<2;++pass)
             {
                 const float y=pass==0?587.f:663.f,height=pass==0?28.f:22.f;
-                text(g,pass==0?"IN":"PREP",{129,y-10,34,20},14,silver,juce::Justification::centred);
+                text(g,pass==0?"IN":"OUT",{129,y-10,34,20},14,silver,juce::Justification::centred);
                 g.setColour(juce::Colour(8,12,11));g.fillRect(166.f,y-height,665.f,height*2);
                 g.setColour(silver.withAlpha(pass==0?.68f:.44f));
                 for(size_t i=0;i<waveHistory.size();++i)
@@ -433,10 +473,14 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
             g.setColour(white);g.strokePath(curve,juce::PathStrokeType(2));
             const auto value=[this](const char* id){return processor.parameters.getRawParameterValue(id)->load();};
             const float hz[]={value("eqLowCut"),160,value("eqMidFreq"),10000,value("eqHighCut")};
-            const float gain[]={0,value("eqLow"),value("eqMid"),value("eqHigh"),0};
             for(int i=0;i<5;++i)
             {
-                const auto pt=juce::Point<float>(frequencyX(hz[i],r),r.getCentreY()-gain[i]*r.getHeight()/36);
+                // Anchor all handles to the ACTUAL combined EQ response.
+                // HP/LP and overlapping shelf gains are not necessarily 0 dB
+                // at their cutoff/centre frequencies.
+                const float response=processor.eqResponse(hz[i]);
+                const auto pt=juce::Point<float>(frequencyX(hz[i],r),
+                    juce::jlimit(r.getY(),r.getBottom(),r.getCentreY()-response*r.getHeight()/36));
                 g.setColour(juce::Colour(35,39,36));g.fillEllipse(pt.x-10,pt.y-10,20,20);g.setColour(i==dragBand?white:silver);g.drawEllipse(pt.x-10,pt.y-10,20,20,2);text(g,juce::String(i+1),{pt.x-8,pt.y-10,16,20},15,white,juce::Justification::centred);
             }
         }
@@ -445,25 +489,74 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
     {
         for(int stage=0;stage<2;++stage)
         {
-            auto chart=r.withWidth((r.getWidth()-30)*.5f).translated(stage*(r.getWidth()+30)*.5f,0);
+            const auto chart=r.withWidth((r.getWidth()-30)*.5f)
+                              .translated(stage*(r.getWidth()+30)*.5f,0);
+            const auto transfer=expanded?chart:chart.withHeight(chart.getHeight()-105.f);
             g.setColour(juce::Colour(10,15,14));g.fillRect(chart);
             const auto value=[this](const char* id){return processor.parameters.getRawParameterValue(id)->load();};
-            const float threshold=value(stage==0?"compThreshold":"comp2Threshold"),ratio=value(stage==0?"compRatio":"comp2Ratio"),makeup=value(stage==0?"compMakeup":"comp2Makeup");
-            const float knee=std::max(value(stage==0?"compKnee":"comp2Knee"),value(stage==0?"compStyle":"comp2Style")>=2?8.f:0.f);
-            for(int i=0;i<5;++i){g.setColour(raised);g.drawVerticalLine(int(chart.getX()+chart.getWidth()*i/4),chart.getY(),chart.getBottom());g.drawHorizontalLine(int(chart.getY()+chart.getHeight()*i/4),chart.getX(),chart.getRight());text(g,juce::String(-60+15*i),{chart.getX()+chart.getWidth()*i/4-14,chart.getBottom()+4,35,20},14,silver);}
+            const float threshold=value(stage==0?"compThreshold":"comp2Threshold");
+            const float ratio=value(stage==0?"compRatio":"comp2Ratio");
+            const float makeup=value(stage==0?"compMakeup":"comp2Makeup");
+            const float knee=std::max(value(stage==0?"compKnee":"comp2Knee"),
+                                      value(stage==0?"compStyle":"comp2Style")>=2?8.f:0.f);
+            for(int i=0;i<5;++i)
+            {
+                g.setColour(raised);
+                g.drawVerticalLine(int(transfer.getX()+transfer.getWidth()*i/4),
+                                   transfer.getY(),transfer.getBottom());
+                g.drawHorizontalLine(int(transfer.getY()+transfer.getHeight()*i/4),
+                                     transfer.getX(),transfer.getRight());
+                text(g,juce::String(-60+15*i),
+                     {transfer.getX()+transfer.getWidth()*i/4-14,transfer.getBottom()+4,35,20},
+                     14,silver);
+            }
             juce::Path path;
             for(int i=0;i<=100;++i)
             {
                 const float level=-60+.6f*i,over=level-threshold;
                 const float gr=jerzy::studio::Compressor::gainReduction(over,ratio,knee);
-                const float x=chart.getX()+i*chart.getWidth()/100,y=juce::jlimit(chart.getY(),chart.getBottom(),dbY(level-gr+makeup,chart,-60,0));
+                const float x=transfer.getX()+i*transfer.getWidth()/100;
+                const float y=juce::jlimit(transfer.getY(),transfer.getBottom(),
+                                           dbY(level-gr+makeup,transfer,-60,0));
                 if(i==0)path.startNewSubPath(x,y);else path.lineTo(x,y);
             }
             const bool on=value(stage==0?"compEnabled":"comp2Enabled")>.5f;
-            g.setColour(on?white:muted.withAlpha(.5f));g.strokePath(path,juce::PathStrokeType(2));
-            text(g,juce::String(stage==0?"COMPRESSOR 1":"COMPRESSOR 2")+"    GR "+juce::String(stage==0?processor.getCompressorReduction():processor.getStageBReduction(),1)+" dB",{chart.getX()+10,chart.getY()+9,chart.getWidth()-20,28},19);
+            g.setColour(on?white:muted.withAlpha(.5f));
+            g.strokePath(path,juce::PathStrokeType(2));
+            text(g,juce::String(stage==0?"COMPRESSOR 1":"COMPRESSOR 2")+
+                   "  /  LIVE GR "+juce::String(stage==0?compressorDisplayDb:stageBDisplayDb,1)+" dB",
+                   {chart.getX()+10,chart.getY()+9,chart.getWidth()-20,28},18);
+
+            if(!expanded)
+            {
+                const auto history=juce::Rectangle<float>(chart.getX()+10,chart.getBottom()-60,
+                                                          chart.getWidth()-20,49);
+                text(g,"GAIN REDUCTION HISTORY / 8.7 s",
+                     {history.getX(),history.getY()-21,history.getWidth()-5,19},14,silver);
+                g.setColour(juce::Colour(7,12,11));g.fillRect(history);
+                for(int mark=0;mark<=2;++mark)
+                {
+                    const float y=history.getY()+history.getHeight()*mark/2;
+                    g.setColour(raised);g.drawHorizontalLine(int(y),history.getX(),history.getRight());
+                }
+                const auto& samples=stage==0?reductionHistory:stageBHistory;
+                juce::Path gainTrace;
+                for(size_t i=0;i<samples.size();++i)
+                {
+                    const auto index=(historyWrite+i)%samples.size();
+                    const float gr=juce::jlimit(0.f,24.f,samples[index]);
+                    const float x=history.getX()+float(i)*history.getWidth()/float(samples.size()-1);
+                    const float y=history.getBottom()-gr*history.getHeight()/24.f;
+                    if(i==0)gainTrace.startNewSubPath(x,y);else gainTrace.lineTo(x,y);
+                }
+                g.setColour(on?juce::Colour(133,185,177):muted.withAlpha(.5f));
+                g.strokePath(gainTrace,juce::PathStrokeType(1.6f));
+                text(g,"24",{history.getRight()-28,history.getY(),26,18},13,silver);
+                text(g,"0",{history.getRight()-28,history.getBottom()-18,26,18},13,silver);
+            }
         }
-        if(!expanded)text(g,"STEREO LINKED   /   SOFT KNEE, SIDECHAIN AND WARM IN ALL CONTROLS",{153,731,938,25},17,silver);
+        if(!expanded)text(g,"TRANSFER CURVE (MODEL)  /  GAIN REDUCTION (MEASURED)",
+                          {153,731,938,25},17,silver);
     }
     else if(page==4)
     {
@@ -472,8 +565,11 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
         for(int i=0;i<=4;++i){const float x=r.getX()+r.getWidth()*i/4;g.setColour(raised);g.drawVerticalLine(int(x),r.getY(),r.getBottom());text(g,juce::String((decay*1.2f+pre)*i/4,2)+" s",{x-25,r.getBottom()+4,65,20},14,silver);}
         for(int i=0;i<=4;++i){const float y=r.getY()+r.getHeight()*i/4;g.setColour(raised);g.drawHorizontalLine(int(y),r.getX(),r.getRight());text(g,juce::String(-18*i)+" dB",{r.getX()+6,y+2,70,20},14,silver);}
         juce::Path path;for(int i=0;i<240;++i){const float t=float(i)*(decay*1.2f+pre)/239,value=t<pre?-72.f:-60.f*(t-pre)/decay,x=r.getX()+r.getWidth()*i/239,y=juce::jlimit(r.getY(),r.getBottom(),dbY(value,r));if(i==0)path.startNewSubPath(x,y);else path.lineTo(x,y);}
-        g.setColour(white);g.strokePath(path,juce::PathStrokeType(2));
-        text(g,"-60 dB / "+juce::String(decay,2)+" s   /   "+juce::String(processor.getTempo(),1)+" BPM",{403,173,430,26},18,silver);
+        const bool reverbOn=processor.parameters.getRawParameterValue("reverbEnabled")->load()>.5f;
+        g.setColour(reverbOn?white:muted.withAlpha(.45f));
+        g.strokePath(path,juce::PathStrokeType(2));
+        text(g,reverbOn?"DECAY MODEL / "+juce::String(decay,2)+" s   /   "+juce::String(processor.getTempo(),1)+" BPM":
+                    "REVERB OFF / DECAY MODEL (NOT LIVE)",{403,173,430,26},16,silver);
     }
     else if(page==5&&!expanded)
     {
@@ -500,22 +596,77 @@ void JerzyAutoTuneAudioProcessorEditor::paintSurface(juce::Graphics& g)
 }
 void JerzyAutoTuneAudioProcessorEditor::timerCallback()
 {
-    processor.copyAnalysis(input,output);
-    std::array<float,4096> data{};
-    for(int pass=0;pass<2;++pass)
+    // A 30 Hz timer is not an audio clock. Freeze the history while transport
+    // is stopped instead of endlessly appending the last detected pitch.
+    const uint64_t sequence=processor.getAnalysisSequence();
+    const bool hasNewAudio=sequence!=lastAnalysisSequence;
+    const float frameReduction=processor.consumeCompressorReduction();
+    const float frameStageBReduction=processor.consumeStageBReduction();
+    if(hasNewAudio)
     {
-        data.fill(0);for(size_t i=0;i<input.size();++i)data[i]=(pass==0?input[i]:output[i])*(.5f-.5f*std::cos(2*juce::MathConstants<float>::pi*float(i)/2048));
-        fft.performFrequencyOnlyForwardTransform(data.data());
-        auto& dest=pass==0?spectrum:processedSpectrum;
-        for(size_t i=0;i<dest.size();++i){const float value=juce::Decibels::gainToDecibels(data[i]/512.f,-90.f);dest[i]=.45f*value+.55f*dest[i];}
+        processor.copyAnalysis(input,output);
+        lastAnalysisSequence=sequence;
+        std::array<float,4096> data{};
+        for(int pass=0;pass<2;++pass)
+        {
+            data.fill(0.f);
+            for(size_t i=0;i<input.size();++i)
+                data[i]=(pass==0?input[i]:output[i])
+                    *(.5f-.5f*std::cos(2*juce::MathConstants<float>::pi*float(i)/2048.f));
+            fft.performFrequencyOnlyForwardTransform(data.data());
+            auto& dest=pass==0?spectrum:processedSpectrum;
+            for(size_t i=0;i<dest.size();++i)
+            {
+                const float value=juce::Decibels::gainToDecibels(data[i]/512.f,-90.f);
+                // A gently falling peak envelope avoids rapid flicker but reacts
+                // promptly to real new harmonics.
+                const float alpha=value>dest[i]?.30f:.10f;
+                dest[i]+=alpha*(value-dest[i]);
+            }
+        }
+        float inEnergy=0,outEnergy=0;
+        for(size_t i=0;i<input.size();++i)
+        {
+            inEnergy+=input[i]*input[i];
+            outEnergy+=output[i]*output[i];
+        }
+        waveHistory[historyWrite]=std::sqrt(inEnergy/float(input.size()));
+        wavePeakHistory[historyWrite]=std::sqrt(outEnergy/float(output.size()));
+        const float pitch=processor.getDetectedPitch();
+        pitchViewCentre=jerzy::studio::steadyPitchCentre(pitchViewCentre,pitch);
+        pitchHistory[historyWrite]=pitch;
+        targetHistory[historyWrite]=processor.getTargetNote();
+        reductionHistory[historyWrite]=frameReduction;
+        stageBHistory[historyWrite]=frameStageBReduction;
+        historyWrite=(historyWrite+1)%pitchHistory.size();
+        correctionDisplayCents+=.28f*(processor.getCorrectionCents()-correctionDisplayCents);
     }
-    float inEnergy=0,outEnergy=0;for(size_t i=0;i<input.size();++i){inEnergy+=input[i]*input[i];outEnergy+=output[i]*output[i];}
-    waveHistory[historyWrite]=std::sqrt(inEnergy/float(input.size()));wavePeakHistory[historyWrite]=std::sqrt(outEnergy/float(output.size()));
-    pitchHistory[historyWrite]=processor.getDetectedPitch();targetHistory[historyWrite]=processor.getTargetNote();reductionHistory[historyWrite]=processor.getCompressorReduction();stageBHistory[historyWrite]=processor.getStageBReduction();historyWrite=(historyWrite+1)%pitchHistory.size();
-    inputDb=juce::jmax(juce::Decibels::gainToDecibels(processor.getInputPeak(),-60.f),inputDb-1.5f);outputDb=juce::jmax(juce::Decibels::gainToDecibels(processor.getOutputPeak(),-60.f),outputDb-1.5f);
-    const float over=juce::jmax(processor.getInputOverload(),processor.getOutputOverload());resetPeak.setToggleState(over>=1,juce::dontSendNotification);resetPeak.setButtonText(over>=1?"! OVER":"RESET PEAK");
-    for(int i=0;i<7;++i)navigation[size_t(i)].getProperties().set("moduleState",processor.parameters.getRawParameterValue(pagePower[i])->load()>.5f);
-    undo.setEnabled(processor.undoManager.canUndo());applyKey.setEnabled(processor.getSuggestedKey()>=0);surface.repaint();
+    // Aggregate peaks across all host audio callbacks instead of sampling an
+    // arbitrary last block; the UI drains these accumulators once per frame.
+    const float inPeak=processor.consumeInputMeterPeak();
+    const float outPeak=processor.consumeOutputMeterPeak();
+    inputDb=juce::jmax(juce::Decibels::gainToDecibels(inPeak,-60.f),inputDb-1.5f);
+    outputDb=juce::jmax(juce::Decibels::gainToDecibels(outPeak,-60.f),outputDb-1.5f);
+    compressorDisplayDb=juce::jmax(hasNewAudio?frameReduction:0.f,compressorDisplayDb-.7f);
+    stageBDisplayDb=juce::jmax(hasNewAudio?frameStageBReduction:0.f,stageBDisplayDb-.7f);
+    const float over=juce::jmax(processor.getInputOverload(),processor.getOutputOverload());
+    resetPeak.setToggleState(over>=1,juce::dontSendNotification);
+    resetPeak.setButtonText(over>=1?"! OVER":"RESET PEAK");
+    for(int i=0;i<7;++i)
+        navigation[size_t(i)].getProperties().set("moduleState",processor.parameters.getRawParameterValue(pagePower[i])->load()>.5f);
+    undo.setEnabled(processor.undoManager.canUndo());
+    applyKey.setEnabled(processor.getSuggestedKey()>=0);
+    // Preserve the static chassis and parameter controls; at 30 Hz only live
+    // plots, history, status LEDs and meters need to be redrawn.
+    surface.repaint(plotBounds().expanded(50.f,55.f).getSmallestIntegerContainer());
+    surface.repaint(138,114,650,39); // page title and its live module-state LED
+    surface.repaint(1135,165,113,420);
+    surface.repaint(25,103,94,660);
+    if(page==0)
+    {
+        surface.repaint(850,156,253,91);  // current note and correction
+        surface.repaint(150,550,690,185); // RMS history and key suggestion
+    }
 }
 void JerzyAutoTuneAudioProcessorEditor::setReal(const char* id,float value)
 {
@@ -525,9 +676,15 @@ void JerzyAutoTuneAudioProcessorEditor::chartMouseDown(const juce::MouseEvent& e
 {
     if(page!=3||!plotBounds().contains(event.position))return;
     const auto r=plotBounds();const auto value=[this](const char* id){return processor.parameters.getRawParameterValue(id)->load();};
-    const float hz[]={value("eqLowCut"),160,value("eqMidFreq"),10000,value("eqHighCut")},gain[]={0,value("eqLow"),value("eqMid"),value("eqHigh"),0};
+    const float hz[]={value("eqLowCut"),160,value("eqMidFreq"),10000,value("eqHighCut")};
     float best=24;dragBand=-1;
-    for(int i=0;i<5;++i){const float distance=event.position.getDistanceFrom({frequencyX(hz[i],r),r.getCentreY()-gain[i]*r.getHeight()/36});if(distance<best){best=distance;dragBand=i;}}
+    for(int i=0;i<5;++i)
+    {
+        const float y=juce::jlimit(r.getY(),r.getBottom(),
+            r.getCentreY()-processor.eqResponse(hz[i])*r.getHeight()/36);
+        const float distance=event.position.getDistanceFrom({frequencyX(hz[i],r),y});
+        if(distance<best){best=distance;dragBand=i;}
+    }
     if(dragBand>=0){processor.undoManager.beginNewTransaction("Drag EQ band");for(auto* id:{"eqLowCut","eqLow","eqMidFreq","eqMid","eqHigh","eqHighCut"})processor.parameters.getParameter(id)->beginChangeGesture();chartMouseDrag(event);}
 }
 void JerzyAutoTuneAudioProcessorEditor::chartMouseDrag(const juce::MouseEvent& event)

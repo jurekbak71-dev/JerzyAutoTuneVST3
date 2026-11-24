@@ -116,8 +116,101 @@ private:
     float midi=-1,confidence=0,pending=-1;
 };
 
-// Stereo-linked lookahead sample-peak limiter. All storage allocated in prepare.
-// Sliding maximum includes the delayed sample; gain never exceeds its safe bound.
+// First-order antiderivative antialiasing (ADAA) for tanh waveshaping.
+// This suppresses folded high-frequency harmonics without adding a resampler
+// or a block of host latency. The effective phase delay is ~0.5 sample.
+// Keep one instance PER CHANNEL: sharing a state corrupts stereo processing.
+class AntialiasedTanh
+{
+public:
+    void reset() noexcept { previous=0.f; ready=false; }
+    float process(float x,float drive,float offset=0.f) noexcept
+    {
+        if(!std::isfinite(x)){reset();return 0.f;}
+        drive=std::max(0.01f,drive);
+        const double now=static_cast<double>(x);
+        const double before=static_cast<double>(previous);
+        const double g=static_cast<double>(drive),bias=static_cast<double>(offset);
+        float result;
+        if(!ready || std::abs(now-before)<1.e-4)
+        {
+            result=static_cast<float>(std::tanh(g*(ready ? (now+before)*.5 : now)+bias));
+        }
+        else
+        {
+            // F(x)=log(cosh(g*x+bias))/g; divided differences of F
+            // approximate the band-limited, nonlinearly-shaped waveform.
+            const double difference=stableLogCosh(g*now+bias)-stableLogCosh(g*before+bias);
+            result=static_cast<float>(difference/(g*(now-before)));
+        }
+        previous=x;ready=true;
+        return std::isfinite(result)?result:0.f;
+    }
+private:
+    static double stableLogCosh(double x) noexcept
+    {
+        constexpr double ln2=0.6931471805599453094;
+        const double magnitude=std::abs(x);
+        return magnitude+std::log1p(std::exp(-2.0*magnitude))-ln2;
+    }
+    float previous=0.f;
+    bool ready=false;
+};
+
+// Causal four-phase windowed-sinc true-peak estimator. The impulse
+// response is centred eight input samples behind the writer. The limiter's
+// existing 3-ms lookahead is longer than that delay, so host PDC is unchanged.
+class TruePeak4x
+{
+public:
+    void prepare() noexcept
+    {
+        for(auto& entry:history)entry={0.f,0.f};
+        index=0;
+        constexpr double pi=3.14159265358979323846;
+        for(size_t phase=0;phase<4;++phase)
+        {
+            double sum=0;
+            for(size_t tap=0;tap<taps;++tap)
+            {
+                const double distance=double(tap)-double(taps/2)+double(phase)*.25;
+                const double sinc=std::abs(distance)<1.e-9?1.0:std::sin(pi*distance)/(pi*distance);
+                const double window=.42-.5*std::cos(2*pi*double(tap)/double(taps-1))
+                                    +.08*std::cos(4*pi*double(tap)/double(taps-1));
+                coefficients[phase][tap]=float(sinc*window);
+                sum+=double(coefficients[phase][tap]);
+            }
+            for(auto& coefficient:coefficients[phase])coefficient=float(double(coefficient)/sum);
+        }
+    }
+    float push(float l,float r,bool analyse) noexcept
+    {
+        history[index]={l,r};
+        index=(index+1)%taps;
+        float peak=std::max(std::abs(l),std::abs(r));
+        if(!analyse)return peak;
+        for(const auto& phase:coefficients)
+        {
+            double a=0,b=0;
+            for(size_t tap=0;tap<taps;++tap)
+            {
+                const auto& samples=history[(index+taps-1-tap)%taps];
+                a+=double(phase[tap])*samples[0];
+                b+=double(phase[tap])*samples[1];
+            }
+            peak=std::max(peak,float(std::max(std::abs(a),std::abs(b))));
+        }
+        return peak;
+    }
+private:
+    static constexpr size_t taps=16;
+    std::array<std::array<float,2>,taps> history{};
+    std::array<std::array<float,taps>,4> coefficients{};
+    size_t index=0;
+};
+
+// Stereo-linked lookahead limiter with 4x intersample peak detection.
+// Delay, output ring and deque are still identical to the legacy release.
 class OutputLimiter
 {
 public:
@@ -127,6 +220,7 @@ public:
         audio.assign(static_cast<size_t>(delay + 1), {});
         peaks.assign(static_cast<size_t>(delay + 2), {});
         head=tail=0; write=0; clock=0; gain=1;
+        oversampled.prepare();
         release = static_cast<float>(std::exp(-1.0/(0.080*rate)));
     }
     int latency() const noexcept { return delay; }
@@ -134,12 +228,16 @@ public:
     {
         if (!std::isfinite(left)) left=0;
         if (!std::isfinite(right)) right=0;
-        const float peak = std::max(std::abs(left), std::abs(right));
+        const float peak = oversampled.push(left,right,enabled);
         const auto capacity = peaks.size();
         while (head != tail && peaks[head].time + static_cast<uint64_t>(delay) < clock) head = (head+1)%capacity;
         while (head != tail && peaks[(tail+capacity-1)%capacity].value <= peak) tail = (tail+capacity-1)%capacity;
         peaks[tail] = {clock, peak}; tail=(tail+1)%capacity;
-        const float required = enabled ? std::min(1.0f, ceiling/std::max(1.0e-12f,peaks[head].value)) : 1.0f;
+        // A four-phase 4x estimator can under-read between phases. Reserve
+        // ~0.7 dB margin when limiting, rather than promising absolute
+        // continuous-time peak containment from finite-rate samples.
+        constexpr float intersampleSafety=1.085f;
+        const float required = enabled ? std::min(1.0f, ceiling/std::max(1.0e-12f,peaks[head].value*intersampleSafety)) : 1.0f;
         gain = std::min(required, 1.0f + (gain-1.0f)*release);
         audio[static_cast<size_t>(write)]={left,right};
         const int read=(write+1)%static_cast<int>(audio.size());
@@ -151,6 +249,7 @@ private:
     struct Peak { uint64_t time=0; float value=0; };
     std::vector<std::array<float,2>> audio;
     std::vector<Peak> peaks;
+    TruePeak4x oversampled;
     size_t head=0,tail=0;
     uint64_t clock=0;
     int delay=1,write=0;

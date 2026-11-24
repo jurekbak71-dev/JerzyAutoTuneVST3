@@ -20,27 +20,120 @@ inline float readDelay(const std::vector<float>& ring, size_t write, float delay
     return ring[a] + (ring[b] - ring[a]) * fraction;
 }
 
-// Audio-thread producer, UI-thread consumer; atomics avoid races without audio locks.
+// Keep the pitch graph stable during vibrato and small note transitions. Pan
+// only if the detected note approaches the edge of the 12-semitone viewport.
+// Extracted from the editor so the behavior can be regression-tested.
+inline float steadyPitchCentre(float centre,float note) noexcept
+{
+    if(!std::isfinite(note)||note<0.f)return centre;
+    if(centre<0.f)return std::round(note);
+    constexpr float margin=4.5f,step=.40f;
+    if(note>centre+margin)return centre+std::min(step,note-centre-margin);
+    if(note<centre-margin)return centre-std::min(step,centre-margin-note);
+    return centre;
+}
+
+// Do not draw two indistinguishable FFT strokes on top of each other.
+// A small tolerance is intentional: windowing and visual smoothing introduce
+// sub-dB fluctuations even for an unchanged signal.
+inline bool spectraNearlyEqual(const std::array<float,1025>& a,
+                               const std::array<float,1025>& b) noexcept
+{
+    float accumulated=0.f;
+    size_t significant=0;
+    for(size_t i=2;i<1024;++i)
+    {
+        if(std::max(a[i],b[i])<-65.f)continue;
+        const float delta=std::abs(a[i]-b[i]);
+        if(delta>2.5f)return false;
+        accumulated+=delta;
+        ++significant;
+    }
+    return significant==0 || accumulated/float(significant)<.85f;
+}
+
+// MIDI latch shared by normal processing and the CPU-sleeping master bypass.
+// Keeping it up to date prevents stale harmonizer notes after a long bypass.
+struct MidiLatch
+{
+    std::array<bool,128> held{}, sustained{};
+    bool pedal=false;
+
+    void reset() noexcept
+    {
+        held.fill(false);
+        sustained.fill(false);
+        pedal=false;
+    }
+
+    void receive(const juce::MidiMessage& message) noexcept
+    {
+        if(message.isNoteOn())
+        {
+            const auto note=size_t(message.getNoteNumber());
+            held[note]=true;
+            sustained[note]=false;
+        }
+        if(message.isNoteOff())
+        {
+            const auto note=size_t(message.getNoteNumber());
+            held[note]=false;
+            sustained[note]=pedal;
+        }
+        if(message.isSustainPedalOn())pedal=true;
+        if(message.isSustainPedalOff()||message.isResetAllControllers())
+        {
+            // CC121 clears controller state, including held sustain.
+            pedal=false;
+            sustained.fill(false);
+        }
+        if(message.isAllNotesOff()||message.isAllSoundOff())
+        {
+            held.fill(false);
+            sustained.fill(false);
+            if(message.isAllSoundOff())pedal=false;
+        }
+    }
+
+    bool active(int note) const noexcept
+    {
+        return note>=0 && note<128 && (held[size_t(note)]||sustained[size_t(note)]);
+    }
+};
+
+// Single audio-thread producer, UI-thread consumer. Keep much more history
+// than the 2048-sample FFT window so the UI normally reads behind the writer,
+// not from slots the callback is overwriting at that instant. No audio locks.
 struct AnalysisTap
 {
     static constexpr size_t size = 2048;
-    std::array<std::atomic<float>, size> input {}, output {};
+    static constexpr size_t capacity = 16384;
+    std::array<std::atomic<float>, capacity> input {}, output {};
     std::atomic<unsigned> position { 0 };
+    std::atomic<uint64_t> publishedSamples { 0 };
     unsigned write = 0;
+    uint64_t written = 0;
     void push(float in, float out) noexcept
     {
         input[write].store(in, std::memory_order_relaxed);
         output[write].store(out, std::memory_order_relaxed);
-        write = (write + 1) % unsigned(size);
+        write = (write + 1) % unsigned(capacity);
+        ++written;
     }
-    void publish() noexcept { position.store(write, std::memory_order_release); }
+    void publish() noexcept
+    {
+        position.store(write, std::memory_order_release);
+        publishedSamples.store(written, std::memory_order_release);
+    }
+    uint64_t sequence() const noexcept { return publishedSamples.load(std::memory_order_acquire); }
     void copy(std::array<float, size>& in, std::array<float, size>& out) const noexcept
     {
-        const auto start = position.load(std::memory_order_acquire);
+        const auto end = position.load(std::memory_order_acquire);
+        const auto start = (size_t(end) + capacity - size) % capacity;
         for (size_t i = 0; i < size; ++i)
         {
-            in[i] = input[(start + i) % size].load(std::memory_order_relaxed);
-            out[i] = output[(start + i) % size].load(std::memory_order_relaxed);
+            in[i] = input[(start + i) % capacity].load(std::memory_order_relaxed);
+            out[i] = output[(start + i) % capacity].load(std::memory_order_relaxed);
         }
     }
 };
@@ -60,6 +153,7 @@ public:
     void prepare(double rate)
     {
         fs = rate; index = phase = frames = 0; learning = false; wasActive=false; fade = 0; warm = size;
+        spectralFadeCoefficient = 1.f - msCoefficient(10.f, fs);
         input = {}; overlap = {}; spectral = {}; dry = {}; gain.fill(1); noise.fill(0); accumulation.fill(0);
         for (int i = 0; i < size; ++i) window[size_t(i)] = std::sqrt(.5f - .5f * std::cos(2.f * pi * float(i) / float(size)));
         for (int k = 0; k < bins; ++k) noise[size_t(k)] = std::abs(profileRate.load()-fs)<.1 ? savedProfile[size_t(k)].load() : 0;
@@ -72,7 +166,7 @@ public:
         if (active && !wasActive) warm = size;
         wasActive = active;
         const float target = active && warm <= 0 ? 1.f : 0;
-        fade += (target - fade) * (1.f - msCoefficient(10, fs));
+        fade += (target - fade) * spectralFadeCoefficient;
         const float l = left, r = right;
         std::array<float, 2> current { l, r };
         for (size_t ch = 0; ch < 2; ++ch)
@@ -162,7 +256,7 @@ private:
     double fs = 48000;
     int index = 0, phase = 0, frames = 0, warm = size;
     bool learning = false, wasActive = false;
-    float fade = 0;
+    float fade = 0, spectralFadeCoefficient = 0;
     std::array<std::array<float, size>, 2> input {}, overlap {}, dry {};
     std::array<std::array<float, size*2>, 2> spectral {};
     std::array<float, size> window {};
@@ -180,6 +274,7 @@ struct Compressor
         attack=msCoefficient(settings.attack*attackFactor,fs); release=msCoefficient(settings.release*releaseFactor,fs);
         hp=std::exp(-2*pi*std::clamp(settings.sidechain,0.f,600.f)/float(fs));
         dcCoeff=std::exp(-2*pi*12.f/float(fs)); makeup=db(settings.makeup);
+        warmOffset=std::tanh(.12f);
     }
     static float gainReduction(float over,float ratio,float knee) noexcept
     {
@@ -214,7 +309,7 @@ struct Compressor
         for(size_t ch=0;ch<2;++ch)
         {
             float& x=ch==0?left:right;
-            const float coloured=(std::tanh(x*2.f+.12f)-std::tanh(.12f))/2.f;
+            const float coloured=(std::tanh(x*2.f+.12f)-warmOffset)/2.f;
             const float filtered=coloured-previous[ch]+dcCoeff*dc[ch]; previous[ch]=coloured;dc[ch]=filtered;
             x+=(filtered-x)*settings.warm*.01f*wet;
         }
@@ -222,7 +317,7 @@ struct Compressor
     float reduction=0;
 private:
     double fs=48000;
-    float envelope=0,attack=0,release=0,hp=1,makeup=1,dcCoeff=0;
+    float envelope=0,attack=0,release=0,hp=1,makeup=1,dcCoeff=0,warmOffset=0;
     std::array<float,2> sideLow{},previous{},dc{};
 };
 
@@ -233,6 +328,7 @@ public:
     void prepare(double rate)
     {
         fs=rate;position=0;echoLength=1;duckEnvelope=0;revFade=delFade=0;hpState={};lpState={};delayLow={};
+        duckRelease=msCoefficient(150.f,fs); virgin=true;
         for(auto& b:echo)b.assign(size_t(fs*6)+8,0);
         for(auto& b:pre)b.assign(size_t(fs*.26)+8,0);
         for(auto& line:lines){line.assign(size_t(fs*.24)+8,0);}
@@ -248,17 +344,24 @@ public:
         echoTarget=std::clamp(echoTarget,1.f,float(echo[0].size()-2));
         damp=std::exp(-2*pi*(2000+(1-settings.damping*.01f)*10000)/float(fs));
         hp=std::exp(-2*pi*160.f/float(fs)); lp=std::exp(-2*pi*8500.f/float(fs));smooth=1-msCoefficient(25,fs);
+        preDelaySamples=std::max(1.f,float(fs)*settings.preDelay*.001f);
+        delayFeedback=std::clamp(settings.feedback*.01f,0.f,.75f);
         if(echoLength<=1){echoLength=echoTarget;length=target;}
     }
     void process(float& left,float& right) noexcept
     {
+        // A never-activated rack is fully dry: do not run eight feedback lines
+        // and the echo network until one of the effects is first enabled.
+        // Once activated, keep advancing the tails even while bypassed.
+        if (virgin && !settings.reverb && !settings.delay) return;
+        virgin=false;
         revFade+=(float(settings.reverb)-revFade)*smooth;delFade+=(float(settings.delay)-delFade)*smooth;
         const float peak=std::max(std::abs(left),std::abs(right));
-        duckEnvelope=std::max(peak,duckEnvelope*msCoefficient(150,fs));
+        duckEnvelope=std::max(peak,duckEnvelope*duckRelease);
         const float duckGain=db(-settings.duck*std::clamp(duckEnvelope*4,0.f,1.f));
         const std::array<float,2> in{left,right};
         std::array<float,2> early{};
-        for(size_t ch=0;ch<2;++ch){pre[ch][prePosition]=in[ch];early[ch]=readDelay(pre[ch],prePosition,std::max(1.f,float(fs)*settings.preDelay*.001f));}
+        for(size_t ch=0;ch<2;++ch){pre[ch][prePosition]=in[ch];early[ch]=readDelay(pre[ch],prePosition,preDelaySamples);}
         prePosition=(prePosition+1)%pre[0].size();
         std::array<float,8> delayed{};float mean=0;
         for(size_t i=0;i<8;++i)
@@ -284,7 +387,7 @@ public:
         right+=(mid-side)*revFade*settings.reverbMix*.01f*duckGain;
         echoLength+=(echoTarget-echoLength)*smooth;
         const float dl=readDelay(echo[0],position,echoLength),dr=readDelay(echo[1],position,echoLength);
-        const float f=std::clamp(settings.feedback*.01f,0.f,.75f);
+        const float f=delayFeedback;
         delayLow[0]+=.35f*((settings.ping?dr:dl)-delayLow[0]);delayLow[1]+=.35f*((settings.ping?dl:dr)-delayLow[1]);
         echo[0][position]=(settings.ping?.5f*(in[0]+in[1]):in[0])+f*delayLow[0];echo[1][position]=(settings.ping?0.f:in[1])+f*delayLow[1];
         left+=dl*delFade*settings.delayMix*.01f*duckGain;right+=dr*delFade*settings.delayMix*.01f*duckGain;
@@ -298,6 +401,8 @@ private:
     std::array<float,8> low{},length{},target{},feedback{};
     std::array<float,2> hpState{},lpState{},delayLow{};
     float revFade=0,delFade=0,echoLength=1,echoTarget=1,duckEnvelope=0,damp=0,hp=0,lp=0,smooth=0;
+    float duckRelease=0,preDelaySamples=1,delayFeedback=0;
+    bool virgin=true;
 };
 
 class Choir

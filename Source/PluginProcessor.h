@@ -54,6 +54,12 @@ public:
     void applySuggestedKey();
     void applyFactoryPreset(int index);
     void copyAnalysis(std::array<float,2048>& in, std::array<float,2048>& out) const noexcept { analysis.copy(in,out); }
+    uint64_t getAnalysisSequence() const noexcept { return analysis.sequence(); }
+    // Peak over all audio callbacks since the previous GUI frame, not one random host block.
+    float consumeInputMeterPeak() noexcept { return inputMeterPeak.exchange(0.f, std::memory_order_acq_rel); }
+    float consumeOutputMeterPeak() noexcept { return outputMeterPeak.exchange(0.f, std::memory_order_acq_rel); }
+    float consumeCompressorReduction() noexcept { return compressorReductionMeter.exchange(0.f, std::memory_order_acq_rel); }
+    float consumeStageBReduction() noexcept { return stageBReductionMeter.exchange(0.f, std::memory_order_acq_rel); }
     float eqResponse(float frequency) const noexcept;
     float getOutputPeak() const noexcept { return outputPeak.load(std::memory_order_relaxed); }
     float getInputPeak() const noexcept { return inputPeak.load(std::memory_order_relaxed); }
@@ -95,15 +101,20 @@ private:
     std::array<std::unique_ptr<signalsmith::stretch::SignalsmithStretch<float>>,4> harmonyEngines;
     std::array<juce::AudioBuffer<float>,4> harmonyOutput;
     std::array<std::array<std::atomic<float>*,5>,4> harmonyParameters {};
-    std::array<bool,128> heldMidi {}, sustainedMidi {};
-    bool sustainPedal=false, harmonyWasActive=false;
+    jerzy::studio::MidiLatch midiLatch;
+    bool harmonyWasActive=false;
     int harmonyWarm=0;
     uint64_t sampleClock=0;
     std::array<juce::SmoothedValue<float>,4> harmonyLevels;
     juce::SmoothedValue<float> harmonyFade, stageBFade, masterFade;
     juce::AudioBuffer<float> masterDelay;
     int masterWrite=0, masterRingLength=1;
+    // Sleep the expensive DSP graph only after master bypass has faded to zero.
+    // Wake in dry-only mode until the lookahead/pitch engine is re-primed.
+    bool masterAsleep=false;
+    int masterRewarm=0;
     std::array<float,2> hardLow {}, hardHigh {}, hardEnvelope {}, satPrevious {}, satDc {};
+    std::array<jerzy::AntialiasedTanh,2> saturator{};
     jerzy::PitchTracker pitchTracker;
     jerzy::OutputLimiter finalLimiter;
     std::array<juce::SmoothedValue<float>, 7> bypassMix;
@@ -142,6 +153,8 @@ private:
     std::atomic<int> editorWidth { 1280 }, editorHeight { 800 };
     std::atomic<float> displayPitch { -1.0f }, displayCorrection { 0.0f }, compressorReduction { 0.0f };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
+    std::atomic<float> inputMeterPeak { 0.0f }, outputMeterPeak { 0.0f };
+    std::atomic<float> compressorReductionMeter { 0.0f }, stageBReductionMeter { 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(JerzyAutoTuneAudioProcessor)
 };

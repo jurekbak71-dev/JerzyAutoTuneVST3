@@ -58,6 +58,9 @@ private:
     std::array<float,1025> spectrum {},processedSpectrum {};
     std::array<float,260> pitchHistory {},targetHistory {},reductionHistory {},stageBHistory {},waveHistory {},wavePeakHistory {};
     size_t historyWrite=0;
+    uint64_t lastAnalysisSequence=0;
+    float pitchViewCentre=-1.f;
+    float compressorDisplayDb=0, stageBDisplayDb=0, correctionDisplayCents=0;
     float inputDb=-60,outputDb=-60;
     int page=0,dragBand=-1;
     bool expanded=false;
