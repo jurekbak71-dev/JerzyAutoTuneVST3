@@ -106,6 +106,30 @@ void runStudioTests()
         check(firstL>.24f&&std::abs(firstR)<1.e-7f&&secondR>.01f,"Tempo-synced ping-pong delay routing/time incorrect");++cases;
     }
     {
+        // A never-enabled Space must be exactly dry and must remain safe to
+        // activate later without leaking samples from its disabled history.
+        Space idle; idle.prepare(48000);
+        for (int i=0;i<48000;++i)
+        {
+            const float originalL=.3f*std::sin(float(i)*.011f);
+            const float originalR=.2f*std::cos(float(i)*.019f);
+            float l=originalL,r=originalR;
+            idle.process(l,r);
+            check(l==originalL && r==originalR,"Idle Space modifies the bypassed signal");
+        }
+        idle.settings.delay=true;idle.settings.delayMix=100;idle.settings.duck=0;
+        idle.configure(120);
+        float delayed=0;
+        for(int i=0;i<=12000;++i)
+        {
+            float l=i==0?1.f:0.f,r=0.f;
+            idle.process(l,r);
+            if(i==12000)delayed=l;
+        }
+        check(delayed>.49f,"Space fails to start after an extended disabled interval");
+        ++cases;
+    }
+    {
         Space delay;delay.settings.delay=true;delay.settings.delayMix=100;delay.settings.duck=0;delay.prepare(48000);delay.configure(120);float echo=0;
         for(int i=0;i<=12000;++i){float l=0,r=i==0?1.f:0;delay.process(l,r);if(i==12000)echo=l;}
         check(echo>.49f,"Ping-pong drops right-only source");++cases;
