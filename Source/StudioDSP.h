@@ -181,6 +181,7 @@ struct Compressor
         attack=msCoefficient(settings.attack*attackFactor,fs); release=msCoefficient(settings.release*releaseFactor,fs);
         hp=std::exp(-2*pi*std::clamp(settings.sidechain,0.f,600.f)/float(fs));
         dcCoeff=std::exp(-2*pi*12.f/float(fs)); makeup=db(settings.makeup);
+        warmOffset=std::tanh(.12f);
     }
     static float gainReduction(float over,float ratio,float knee) noexcept
     {
@@ -215,7 +216,7 @@ struct Compressor
         for(size_t ch=0;ch<2;++ch)
         {
             float& x=ch==0?left:right;
-            const float coloured=(std::tanh(x*2.f+.12f)-std::tanh(.12f))/2.f;
+            const float coloured=(std::tanh(x*2.f+.12f)-warmOffset)/2.f;
             const float filtered=coloured-previous[ch]+dcCoeff*dc[ch]; previous[ch]=coloured;dc[ch]=filtered;
             x+=(filtered-x)*settings.warm*.01f*wet;
         }
@@ -223,7 +224,7 @@ struct Compressor
     float reduction=0;
 private:
     double fs=48000;
-    float envelope=0,attack=0,release=0,hp=1,makeup=1,dcCoeff=0;
+    float envelope=0,attack=0,release=0,hp=1,makeup=1,dcCoeff=0,warmOffset=0;
     std::array<float,2> sideLow{},previous{},dc{};
 };
 
