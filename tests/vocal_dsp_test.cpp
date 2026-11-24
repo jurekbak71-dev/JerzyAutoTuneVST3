@@ -60,6 +60,36 @@ int main()
                 check(std::abs(l-(i==limiter.latency() ? .2f : 0))<1.e-7f,"limiter latency mismatch");
             }
             ++checks;
+            // The quarter-Nyquist sinusoid has true peaks far above its
+            // individual samples at a 45-degree phase. A sample-peak-only
+            // limiter cannot detect this particular intersample overload.
+            {
+                jerzy::OutputLimiter truePeak;
+                truePeak.prepare(fs);
+                constexpr double phase=0.78539816339744830961566;
+                const float actualAmplitude=.95f, ceiling=.7f;
+                double sinPart=0,cosPart=0;
+                int measured=0;
+                for(int n=0;n<static_cast<int>(fs*.15);++n)
+                {
+                    const double angle=2*pi*0.25*double(n)+phase;
+                    float left=actualAmplitude*static_cast<float>(std::sin(angle)),right=-left*.5f;
+                    check(std::abs(left)<ceiling,"Adversarial true-peak test is not sample-peak-free");
+                    truePeak.process(left,right,ceiling,true);
+                    if(n>static_cast<int>(fs*.07))
+                    {
+                        sinPart+=double(left)*std::sin(angle);
+                        cosPart+=double(left)*std::cos(angle);
+                        ++measured;
+                    }
+                }
+                const double reconstructedAmplitude=2*std::hypot(sinPart,cosPart)/measured;
+                check(reconstructedAmplitude<ceiling*1.01,
+                      "Four-phase true-peak limiter did not contain intersample sine amplitude");
+                check(reconstructedAmplitude>ceiling*.45,
+                      "True-peak limiter attenuated a normal sine excessively");
+                ++checks;
+            }
         }
         // Compare ADAA against the previous direct tanh at a frequency
         // whose third harmonic folds from 30 kHz down to 18 kHz at 48 kHz.
