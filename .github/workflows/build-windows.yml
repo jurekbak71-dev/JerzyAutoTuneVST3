@@ -117,11 +117,18 @@ jobs:
       - name: Publish verified 3.0.1 stable installer
         # One-time production release: requires an explicitly marked merge commit.
         # Ordinary main pushes and PR runs continue to validate without publishing.
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[publish-v3.0.1]')
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[publish-v3.0.1]')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $setup = (Get-ChildItem dist/*Setup.exe | Select-Object -First 1).FullName
+          $line = (Get-Content dist/SHA256.txt -Raw).Trim()
+          $expected = ($line -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "Installer checksum mismatch; refusing release" }
+          if ((Get-ChildItem dist/*Setup.exe).Count -ne 1) { throw "Expected exactly one installer" }
+          Write-Host "Verified installer SHA256: $actual"
           Copy-Item build/gui-previews/studio-0-focus.png dist/JerzyVocalStudio-3.0.1-Tune.png
           Compress-Archive -Path build/gui-previews/studio-*.png -DestinationPath dist/JerzyVocalStudio-3.0.1-GUI.zip
           $tag = 'v3.0.1'
