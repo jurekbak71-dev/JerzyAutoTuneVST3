@@ -20,27 +20,39 @@ inline float readDelay(const std::vector<float>& ring, size_t write, float delay
     return ring[a] + (ring[b] - ring[a]) * fraction;
 }
 
-// Audio-thread producer, UI-thread consumer; atomics avoid races without audio locks.
+// Single audio-thread producer, UI-thread consumer. Keep much more history
+// than the 2048-sample FFT window so the UI normally reads behind the writer,
+// not from slots the callback is overwriting at that instant. No audio locks.
 struct AnalysisTap
 {
     static constexpr size_t size = 2048;
-    std::array<std::atomic<float>, size> input {}, output {};
+    static constexpr size_t capacity = 16384;
+    std::array<std::atomic<float>, capacity> input {}, output {};
     std::atomic<unsigned> position { 0 };
+    std::atomic<uint64_t> publishedSamples { 0 };
     unsigned write = 0;
+    uint64_t written = 0;
     void push(float in, float out) noexcept
     {
         input[write].store(in, std::memory_order_relaxed);
         output[write].store(out, std::memory_order_relaxed);
-        write = (write + 1) % unsigned(size);
+        write = (write + 1) % unsigned(capacity);
+        ++written;
     }
-    void publish() noexcept { position.store(write, std::memory_order_release); }
+    void publish() noexcept
+    {
+        position.store(write, std::memory_order_release);
+        publishedSamples.store(written, std::memory_order_release);
+    }
+    uint64_t sequence() const noexcept { return publishedSamples.load(std::memory_order_acquire); }
     void copy(std::array<float, size>& in, std::array<float, size>& out) const noexcept
     {
-        const auto start = position.load(std::memory_order_acquire);
+        const auto end = position.load(std::memory_order_acquire);
+        const auto start = (size_t(end) + capacity - size) % capacity;
         for (size_t i = 0; i < size; ++i)
         {
-            in[i] = input[(start + i) % size].load(std::memory_order_relaxed);
-            out[i] = output[(start + i) % size].load(std::memory_order_relaxed);
+            in[i] = input[(start + i) % capacity].load(std::memory_order_relaxed);
+            out[i] = output[(start + i) % capacity].load(std::memory_order_relaxed);
         }
     }
 };
