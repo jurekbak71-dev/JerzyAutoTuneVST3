@@ -342,7 +342,7 @@ void JerzyAutoTuneAudioProcessorEditor::drawSpectrum(juce::Graphics& g,juce::Rec
     // previously mixed two incompatible dB scales and was misleading.
     if(eqResponsePage)
     {
-        text(g,"EQ GAIN / dB",{170,r.getBottom()+27,320,23},16,silver);
+        if(!expanded)text(g,"EQ GAIN / dB",{170,r.getBottom()+27,320,23},16,silver);
         return;
     }
 
