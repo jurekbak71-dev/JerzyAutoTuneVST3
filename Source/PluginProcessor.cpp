@@ -267,6 +267,8 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
     outputPeak.store(0.0f, std::memory_order_relaxed);
     inputMeterPeak.store(0.0f, std::memory_order_relaxed);
     outputMeterPeak.store(0.0f, std::memory_order_relaxed);
+    compressorReductionMeter.store(0.0f, std::memory_order_relaxed);
+    stageBReductionMeter.store(0.0f, std::memory_order_relaxed);
     displayPitch.store(-1.0f, std::memory_order_relaxed);
     displayCorrection.store(0.0f, std::memory_order_relaxed);
     compressorReduction.store(0.0f, std::memory_order_relaxed);
@@ -662,6 +664,12 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
     }
     compressorReduction.store(blockReduction, std::memory_order_relaxed);
     stageBReduction.store(blockBReduction,std::memory_order_relaxed);
+    const auto recordReduction=[](std::atomic<float>& meter,float next) noexcept {
+        float old=meter.load(std::memory_order_relaxed);
+        while(old<next && !meter.compare_exchange_weak(old,next,std::memory_order_relaxed)) {}
+    };
+    recordReduction(compressorReductionMeter,blockReduction);
+    recordReduction(stageBReductionMeter,blockBReduction);
 }
 
 void JerzyAutoTuneAudioProcessor::collectPitch(const juce::AudioBuffer<float>& buffer,int offset,int count) noexcept
