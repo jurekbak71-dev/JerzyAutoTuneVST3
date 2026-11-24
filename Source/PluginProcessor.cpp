@@ -922,8 +922,9 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             const float dry=masterDelay.getSample(ch,read),processed=buffer.getSample(ch,i);
             const float output=dry+(processed-dry)*wet;buffer.setSample(ch,i,output);
             // Align the displayed input with the actually audible FINAL output.
-            // Record the first channel only once per sample, after master bypass.
-            if(ch==0)analysis.push(dry,output);
+            // Use the vocal pitch detector's stable dominant-channel selection.
+            // A right-only stereo vocal must not produce a flat spectrum.
+            if(ch==juce::jlimit(0,channels-1,detectorChannel))analysis.push(dry,output);
             blockOutputPeak=juce::jmax(blockOutputPeak,std::abs(output));
         }
     }
