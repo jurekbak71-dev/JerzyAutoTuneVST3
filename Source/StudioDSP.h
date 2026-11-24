@@ -33,6 +33,25 @@ inline float steadyPitchCentre(float centre,float note) noexcept
     return centre;
 }
 
+// Do not draw two indistinguishable FFT strokes on top of each other.
+// A small tolerance is intentional: windowing and visual smoothing introduce
+// sub-dB fluctuations even for an unchanged signal.
+inline bool spectraNearlyEqual(const std::array<float,1025>& a,
+                               const std::array<float,1025>& b) noexcept
+{
+    float accumulated=0.f;
+    size_t significant=0;
+    for(size_t i=2;i<1024;++i)
+    {
+        if(std::max(a[i],b[i])<-65.f)continue;
+        const float delta=std::abs(a[i]-b[i]);
+        if(delta>2.5f)return false;
+        accumulated+=delta;
+        ++significant;
+    }
+    return significant==0 || accumulated/float(significant)<.85f;
+}
+
 // MIDI latch shared by normal processing and the CPU-sleeping master bypass.
 // Keeping it up to date prevents stale harmonizer notes after a long bypass.
 struct MidiLatch
