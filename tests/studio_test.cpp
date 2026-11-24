@@ -41,6 +41,22 @@ void runStudioTests()
     using namespace jerzy::studio;
     int cases=0;
     {
+        std::array<float,1025> inputSpectrum{},outputSpectrum{};
+        inputSpectrum.fill(-90.f);outputSpectrum.fill(-90.f);
+        check(spectraNearlyEqual(inputSpectrum,outputSpectrum),
+              "Silent FFT curves should be recognized as matching");
+        inputSpectrum[130]=outputSpectrum[130]=-18.f;
+        check(spectraNearlyEqual(inputSpectrum,outputSpectrum),
+              "Unchanged voiced FFT curves should not be double-drawn");
+        outputSpectrum[130]=-23.f;
+        check(!spectraNearlyEqual(inputSpectrum,outputSpectrum),
+              "Real 5-dB spectral difference incorrectly labelled identical");
+        outputSpectrum[130]=-18.5f;
+        check(spectraNearlyEqual(inputSpectrum,outputSpectrum),
+              "Sub-dB visual FFT jitter should not create a second trace");
+        ++cases;
+    }
+    {
         // Integration: a note received during master DSP sleep must be held
         // when audio resumes, as if it arrived at the first waking block.
         JerzyAutoTuneAudioProcessor sleeping,reference;
