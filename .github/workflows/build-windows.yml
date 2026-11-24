@@ -109,6 +109,8 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Publish tested installer download
+        # PR builds validate and package only; a release requires manual dispatch from main.
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
