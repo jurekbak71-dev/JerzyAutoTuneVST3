@@ -41,6 +41,28 @@ void runStudioTests()
     using namespace jerzy::studio;
     int cases=0;
     {
+        // Notes and sustain change even while the CPU-heavy master DSP sleeps.
+        MidiLatch latch;
+        const auto on=juce::MidiMessage::noteOn(1,65,juce::uint8(100));
+        const auto off=juce::MidiMessage::noteOff(1,65);
+        latch.receive(on);
+        check(latch.active(65),"MIDI latch loses Note On");
+        latch.receive(juce::MidiMessage::controllerEvent(1,64,127));
+        latch.receive(off);
+        check(latch.active(65),"Sustain does not preserve a released note");
+        latch.receive(juce::MidiMessage::controllerEvent(1,64,0));
+        check(!latch.active(65),"Sustain off left a stuck MIDI note");
+        latch.receive(on);latch.receive(off);
+        check(!latch.active(65),"Note Off left a stuck MIDI note");
+        latch.receive(on);
+        latch.receive(juce::MidiMessage::allNotesOff(1));
+        check(!latch.active(65),"All Notes Off failed to release a held note");
+        latch.receive(on);
+        latch.reset();
+        check(!latch.active(65),"MIDI state reset failed");
+        ++cases;
+    }
+    {
         float centre=steadyPitchCentre(-1.f,60.2f);
         check(centre==60.f,"Pitch view did not initialise to a stable note");
         check(steadyPitchCentre(centre,64.f)==centre,"Vibrato pans the entire pitch graph");
