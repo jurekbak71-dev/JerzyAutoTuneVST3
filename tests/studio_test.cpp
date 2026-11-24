@@ -41,6 +41,17 @@ void runStudioTests()
     using namespace jerzy::studio;
     int cases=0;
     {
+        float centre=steadyPitchCentre(-1.f,60.2f);
+        check(centre==60.f,"Pitch view did not initialise to a stable note");
+        check(steadyPitchCentre(centre,64.f)==centre,"Vibrato pans the entire pitch graph");
+        check(steadyPitchCentre(centre,-1.f)==centre,"Silence pans the pitch graph");
+        const float moved=steadyPitchCentre(centre,72.f);
+        check(moved>centre && moved-centre<.41f,"Large jump changes the pitch axis abruptly");
+        for(int i=0;i<60;++i)centre=steadyPitchCentre(centre,72.f);
+        check(std::abs(centre-67.5f)<.1f,"Pitch viewport does not settle inside stable margins");
+        ++cases;
+    }
+    {
         // FFT snapshots must be ordered, aligned and independent of the ring's
         // current writer slot after wraparound.
         AnalysisTap tap;
