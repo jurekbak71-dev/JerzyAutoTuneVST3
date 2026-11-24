@@ -348,16 +348,24 @@ void JerzyAutoTuneAudioProcessorEditor::drawSpectrum(juce::Graphics& g,juce::Rec
 
     const auto inputColour=juce::Colour(133,185,177);
     const auto outputColour=white;
+    const bool matched=showOutput && jerzy::studio::spectraNearlyEqual(spectrum,processedSpectrum);
     if(!expanded)
     {
-        text(g,"INPUT SPECTRUM",{166,r.getBottom()+27,240,24},16,inputColour);
-        if(showOutput)text(g,"FINAL OUTPUT",{416,r.getBottom()+27,240,24},16,outputColour);
+        if(matched)
+            text(g,"INPUT = FINAL OUTPUT  /  NO SIGNIFICANT CHANGE",
+                 {166,r.getBottom()+27,565,24},16,outputColour);
+        else
+        {
+            text(g,"INPUT SPECTRUM",{166,r.getBottom()+27,240,24},16,inputColour);
+            if(showOutput)text(g,"FINAL OUTPUT",{416,r.getBottom()+27,240,24},16,outputColour);
+        }
     }
     const float fs=juce::jmax(1.f,processor.graphRate.load());
     juce::Graphics::ScopedSaveState clipping(g);
     g.reduceClipRegion(r.toNearestInt());
     for(int pass=0;pass<(showOutput?2:1);++pass)
     {
+        if(matched && pass==0)continue; // show one clear line, not a doubled stroke
         const auto& bins=pass==0?spectrum:processedSpectrum;
         juce::Path path;
         for(int x=0;x<int(r.getWidth());++x)
