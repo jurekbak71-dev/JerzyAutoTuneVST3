@@ -184,6 +184,7 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
     keyDetector.reset(); suggestedKey.store(-1); suggestedConfidence.store(0);
     heldMidi.fill(false); sustainedMidi.fill(false); sustainPedal=false;sampleClock=0;
     hardLow={};hardHigh={};hardEnvelope={};satPrevious={};satDc={};
+    for(auto& shaper:saturator)shaper.reset();
     stageBFade.reset(sampleRate,.010);stageBFade.setCurrentAndTargetValue(parameters.getRawParameterValue("comp2Enabled")->load());
     masterFade.reset(sampleRate,.010);masterFade.setCurrentAndTargetValue(parameters.getRawParameterValue("masterEnabled")->load());
     harmonyFade.reset(sampleRate,.020);harmonyFade.setCurrentAndTargetValue(0);
@@ -557,22 +558,34 @@ void JerzyAutoTuneAudioProcessor::processVocalChain(juce::AudioBuffer<float>& bu
                 x = dry + (x-dry)*wet[2];
             }
 
-            if (advanced || satOn)
+            if (satOn || wet[3]>1.e-6f)
             {
                 const float dry = x;
                 satToneLow[ci] = (1.0f - toneA) * x + toneA * satToneLow[ci];
                 const float low = satToneLow[ci];
                 const float high = x - low;
                 const float pre = low * (1.0f - 0.35f * satTone) + high * (1.0f + 0.35f * satTone);
-                float driven = std::tanh(pre * satDrive) * satDriveNormaliser;
+                // ADAA: the two selectable saturation shapes share one
+                // antialiased shaper, with independent channel history.
+                const float shaped=saturator[ci].process(
+                    pre,satDrive,saturationModel>0?satShape:0.f);
+                float driven=shaped*satDriveNormaliser;
                 if(saturationModel>0)
                 {
-                    // Shape coefficients are constant over the current processing block.
-                    const float coloured=(std::tanh(pre*satDrive+satShape)-satShapeOffset)*satShapeNormaliser;
-                    driven=coloured-satPrevious[ci]+satDcCoeff*satDc[ci];satPrevious[ci]=coloured;satDc[ci]=driven;
+                    const float coloured=(shaped-satShapeOffset)*satShapeNormaliser;
+                    driven=coloured-satPrevious[ci]+satDcCoeff*satDc[ci];
+                    satPrevious[ci]=coloured;satDc[ci]=driven;
                 }
                 x = (x + (driven - x) * satMix) * satOutput;
                 x = dry + (x-dry)*wet[3];
+            }
+            else
+            {
+                // Do not run log/exp antialias mathematics while completely
+                // bypassed. Prime filter state from current input on reentry.
+                saturator[ci].reset();
+                satToneLow[ci]=x;
+                satPrevious[ci]=satDc[ci]=0.f;
             }
 
             doublerBuffer.setSample(ch, doublerWrite, x);
