@@ -30,6 +30,12 @@ jobs:
         run: |
           ctest --test-dir build -C Release --output-on-failure 2>&1 | Tee-Object tests.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: DSP microbenchmark (informational)
+        shell: pwsh
+        run: |
+          $env:JERZY_DSP_BENCHMARK = '1'
+          ctest --test-dir build -C Release -V -R autotune_gui_and_parameters 2>&1 | Tee-Object benchmark.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify native binary and metadata
         shell: pwsh
         run: |
