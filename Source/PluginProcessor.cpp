@@ -740,19 +740,8 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     {
         masterAsleep=true;
         float inMax=0.f,outMax=0.f;
-        // Use one dominant channel for the entire block. Switching the
-        // analyzer source every sample creates an incoherent FFT on stereo.
-        int tapChannel=0;
-        if(channels==2)
-        {
-            double leftEnergy=0,rightEnergy=0;
-            for(int i=0;i<samples;++i)
-            {
-                leftEnergy+=std::abs(buffer.getSample(0,i));
-                rightEnergy+=std::abs(buffer.getSample(1,i));
-            }
-            if(rightEnergy>leftEnergy*2.0)tapChannel=1;
-        }
+        // Keep a stable analyzer source for the entire block; choose it
+        // from the audible, PDC-DELAYED output instead of future dry input.
         for(int i=0;i<samples;++i)
         {
             const int read=(masterWrite-getLatencySamples()+masterRingLength)%masterRingLength;
@@ -770,8 +759,20 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 buffer.setSample(ch,i,output[ch]);
                 outMax=juce::jmax(outMax,std::abs(output[ch]));
             }
-            analysis.push(output[tapChannel],output[tapChannel]);
             masterWrite=(masterWrite+1)%masterRingLength;
+        }
+        double leftEnergy=0,rightEnergy=0;
+        if(channels==2)
+            for(int i=0;i<samples;++i)
+            {
+                leftEnergy+=std::abs(buffer.getSample(0,i));
+                rightEnergy+=std::abs(buffer.getSample(1,i));
+            }
+        const int tapChannel=channels==2&&rightEnergy>leftEnergy*2.0?1:0;
+        for(int i=0;i<samples;++i)
+        {
+            const float sample=buffer.getSample(tapChannel,i);
+            analysis.push(sample,sample);
         }
         analysis.publish();
         if(inMax>=1.f)inputOverload.store(juce::jmax(inputOverload.load(),inMax));
