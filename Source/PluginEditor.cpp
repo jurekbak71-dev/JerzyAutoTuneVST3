@@ -647,6 +647,7 @@ void JerzyAutoTuneAudioProcessorEditor::timerCallback()
     // Preserve the static chassis and parameter controls; at 30 Hz only live
     // plots, history, status LEDs and meters need to be redrawn.
     surface.repaint(plotBounds().expanded(50.f,55.f).getSmallestIntegerContainer());
+    surface.repaint(138,114,650,39); // page title and its live module-state LED
     surface.repaint(1135,165,113,420);
     surface.repaint(25,103,94,660);
     if(page==0)
