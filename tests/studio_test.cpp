@@ -177,7 +177,10 @@ void runStudioTests()
     {
         JerzyAutoTuneAudioProcessor a,b;dry(a);dry(b);set(b,"comp2Enabled",1);set(b,"comp2Threshold",-30);set(b,"comp2Ratio",4);
         const auto bypass=render(a,48000),compressed=render(b,48000);
-        check(energy(compressed,24000)<energy(bypass,24000)*.6,"Second compressor does not independently compress audio");++cases;
+        check(energy(compressed,24000)<energy(bypass,24000)*.6,"Second compressor does not independently compress audio");
+        check(b.consumeStageBReduction()>.5f,"Live compressor stage B telemetry is missing");
+        check(b.consumeStageBReduction()==0,"Live compressor GR peak was not cleared after UI read");
+        ++cases;
     }
     {
         JerzyAutoTuneAudioProcessor a,b;dry(a);dry(b);
