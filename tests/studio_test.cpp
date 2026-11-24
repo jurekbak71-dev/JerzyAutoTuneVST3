@@ -286,6 +286,57 @@ void runStudioTests()
         check(d.key==0&&!d.minor,"Key suggestion fails reference C-major phrase");++cases;
     }
     {
+        // Master bypass must be a true PDC-aligned fast path after the fade
+        // settles. Re-enabling cannot mute output while pitch DSP warms up.
+        JerzyAutoTuneAudioProcessor p;
+        dry(p);set(p,"masterEnabled",0);
+        p.prepareToPlay(48000,128);
+        const int latency=p.getLatencySamples();
+        juce::AudioBuffer<float> b(2,128);juce::MidiBuffer midi;
+        for(int block=0;block<145;++block)
+        {
+            for(int i=0;i<128;++i)
+            {
+                const int n=block*128+i;
+                const float sample=.3f*std::sin(float(n)*.021f);
+                b.setSample(0,i,sample);b.setSample(1,i,sample);
+            }
+            p.processBlock(b,midi);
+            if(block>latency/128+2)
+            {
+                for(int i=0;i<128;++i)
+                {
+                    const int source=block*128+i-latency;
+                    const float reference=.3f*std::sin(float(source)*.021f);
+                    check(std::abs(b.getSample(0,i)-reference)<1.e-5f,
+                          "Sleeping master bypass corrupted dry audio or its PDC");
+                }
+            }
+        }
+        set(p,"masterEnabled",1);
+        float smallestBlockPeak=1.f;
+        for(int block=0;block<180;++block)
+        {
+            float peak=0;
+            for(int i=0;i<128;++i)
+            {
+                const int n=(145+block)*128+i;
+                const float sample=.3f*std::sin(float(n)*.021f);
+                b.setSample(0,i,sample);b.setSample(1,i,sample);
+            }
+            p.processBlock(b,midi);
+            for(int i=0;i<128;++i)
+            {
+                const float sample=b.getSample(0,i);
+                check(std::isfinite(sample),"Nonfinite audio on master DSP wake");
+                peak=std::max(peak,std::abs(sample));
+            }
+            smallestBlockPeak=std::min(smallestBlockPeak,peak);
+        }
+        check(smallestBlockPeak>.05f,"Master rewarm caused an audible dropout");
+        ++cases;
+    }
+    {
         JerzyAutoTuneAudioProcessor p;dry(p);set(p,"masterEnabled",0);p.prepareToPlay(48000,128);
         juce::AudioBuffer<float> b(2,128);juce::MidiBuffer midi;int peak=-1;
         for(int block=0;block<p.getLatencySamples()/128+3;++block)
