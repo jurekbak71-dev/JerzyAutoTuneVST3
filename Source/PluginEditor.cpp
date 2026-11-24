@@ -588,6 +588,8 @@ void JerzyAutoTuneAudioProcessorEditor::timerCallback()
     // is stopped instead of endlessly appending the last detected pitch.
     const uint64_t sequence=processor.getAnalysisSequence();
     const bool hasNewAudio=sequence!=lastAnalysisSequence;
+    const float frameReduction=processor.consumeCompressorReduction();
+    const float frameStageBReduction=processor.consumeStageBReduction();
     if(hasNewAudio)
     {
         processor.copyAnalysis(input,output);
@@ -622,8 +624,8 @@ void JerzyAutoTuneAudioProcessorEditor::timerCallback()
         pitchViewCentre=jerzy::studio::steadyPitchCentre(pitchViewCentre,pitch);
         pitchHistory[historyWrite]=pitch;
         targetHistory[historyWrite]=processor.getTargetNote();
-        reductionHistory[historyWrite]=processor.getCompressorReduction();
-        stageBHistory[historyWrite]=processor.getStageBReduction();
+        reductionHistory[historyWrite]=frameReduction;
+        stageBHistory[historyWrite]=frameStageBReduction;
         historyWrite=(historyWrite+1)%pitchHistory.size();
         correctionDisplayCents+=.28f*(processor.getCorrectionCents()-correctionDisplayCents);
     }
@@ -633,8 +635,8 @@ void JerzyAutoTuneAudioProcessorEditor::timerCallback()
     const float outPeak=processor.consumeOutputMeterPeak();
     inputDb=juce::jmax(juce::Decibels::gainToDecibels(inPeak,-60.f),inputDb-1.5f);
     outputDb=juce::jmax(juce::Decibels::gainToDecibels(outPeak,-60.f),outputDb-1.5f);
-    compressorDisplayDb=juce::jmax(hasNewAudio?processor.getCompressorReduction():0.f,compressorDisplayDb-.7f);
-    stageBDisplayDb=juce::jmax(hasNewAudio?processor.getStageBReduction():0.f,stageBDisplayDb-.7f);
+    compressorDisplayDb=juce::jmax(hasNewAudio?frameReduction:0.f,compressorDisplayDb-.7f);
+    stageBDisplayDb=juce::jmax(hasNewAudio?frameStageBReduction:0.f,stageBDisplayDb-.7f);
     const float over=juce::jmax(processor.getInputOverload(),processor.getOutputOverload());
     resetPeak.setToggleState(over>=1,juce::dontSendNotification);
     resetPeak.setButtonText(over>=1?"! OVER":"RESET PEAK");
