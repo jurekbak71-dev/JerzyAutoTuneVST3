@@ -132,6 +132,12 @@ void runStudioTests()
         latch.receive(on);latch.receive(off);
         check(!latch.active(65),"Note Off left a stuck MIDI note");
         latch.receive(on);
+        latch.receive(juce::MidiMessage::controllerEvent(1,64,127));
+        latch.receive(off);
+        check(latch.active(65),"Failed to hold a sustained note before CC121");
+        latch.receive(juce::MidiMessage::controllerEvent(1,121,0));
+        check(!latch.active(65),"MIDI Reset All Controllers left a stuck sustain note");
+        latch.receive(on);
         latch.receive(juce::MidiMessage::allNotesOff(1));
         check(!latch.active(65),"All Notes Off failed to release a held note");
         latch.receive(on);
