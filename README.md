@@ -12,9 +12,19 @@ Native Windows 10/11 x64 vocal processor, extended from JerzyAutoTuneVST3 rather
 - Four independently configured harmony voices, interval/scale/MIDI modes, per-voice gain, pan and formant. Fractional-delay choir with 4/8/16/32 unison voices.
 - Spectral breath/character shaping; key suggestion from confident monophonic phrases with explicit Apply.
 - Oxidized steel, black and dirty silver native vector interface. Red zero ticks and overload indicators; green ON / red OFF LEDs with text. Focus view and ALL CONTROLS, typed values, zoom, session size recall, factory presets, A/B and undo.
-- Final stereo-linked lookahead sample-peak limiter after effects and output trim. Latency-compensated master bypass.
+- Final stereo-linked 4x FIR intersample-aware lookahead limiter after effects and output trim. Latency-compensated master bypass.
 
-This is a **Studio-latency** processor; the host receives the actual latency. It does not promise low-latency live monitoring. The limiter bounds sample peaks, not intersample true peaks. Learned noise reduction and voice shaping are independently implemented DSP, not trained AI or a complete physical vocal-tract simulation. Key suggestion does not analyze polyphonic files or infer BPM; delay reads host tempo. Manual offline note editing is not implemented. Commercial-product equivalence is not asserted.
+This is a **Studio-latency** processor; the host receives the actual latency. It does not promise low-latency live monitoring. The final limiter now detects intersample peaks with a 4x polyphase FIR and reserves approximately 0.7 dB of limiting guardband. This is a finite-rate true-peak *estimate*, not a certified BS.1770 meter or an unconditional continuous-time peak guarantee. Learned noise reduction and voice shaping are independently implemented DSP, not trained AI or a complete physical vocal-tract simulation. Key suggestion does not analyze polyphonic files or infer BPM; delay reads host tempo. Manual offline note editing is not implemented. Commercial-product equivalence is not asserted.
+
+## DSP repairs under review
+
+The `fix/autotune-301-dsp-audit-20261124` branch adds first-order antiderivative antialiasing (ADAA) for the two tanh saturation models, with a per-channel state and stable log-cosh evaluation. This attenuates folded high-frequency harmonics; it has a small effective fractional-sample phase delay and is **not** identical to the legacy saturation sound. Input/output spectral plots and optional Windows CI alias tests are available for comparisons.
+
+The 4x FIR intersample-aware output limiter retains the original 3-ms audio delay and the existing VST3 latency declaration. Its sample-peak and adversarial intersample test cases must pass on the native Windows CI before merge; test coverage cannot establish a mathematical guarantee for all future waveforms.
+
+Once the master bypass crossfade reaches fully dry, the plugin now has a CPU-saving path that maintains the latency-aligned dry ring, peak meters and audio visualizers while skipping the expensive pitch and effects graph. Re-enabling processing primes the graph from incoming audio before fading wet back in. This is intended to prevent a transient dropout, but real FL Studio testing is required before release.
+
+No VST3 parameter IDs, factory program identities or plugin IDs are changed. Do not merge the Draft PR or publish a production release solely because one CI run passes.
 
 ## Native visualizers and honest signal paths
 
@@ -23,7 +33,7 @@ This is a **Studio-latency** processor; the host receives the actual latency. It
 - Tone shows the theoretical **EQ transfer function** on a separate ±18 dB gain scale. It is intentionally not overlaid on an incompatible 0 to -72 dB spectrum scale.
 - Dynamics shows the **modelled** compressor transfer functions separately from **measured** gain-reduction histories for each stage. The histories only advance when audio does.
 - Space displays a **modelled decay envelope**, not an impulse-response measurement. The caption states when the reverb is disabled.
-- Input/Output dBFS meters aggregate peaks across all host callbacks between GUI timer frames; overload latches until reset. The meters are sample-peak, **not** calibrated EBU/R128 or true-peak loudness meters.
+- Input/Output dBFS meters aggregate peaks across all host callbacks between GUI timer frames; overload latches until reset. The GUI meters remain **sample-peak** (not EBU/R128 loudness meters or true-peak meters), even though the final limiter uses 4x intersample detection.
 
 Native Windows screenshots in CI may use synthetic audio for deterministic regression. Such screenshots demonstrate the real renderer and DSP paths, but are not substitutes for live FL Studio measurements, listening and DPI qualification.
 
