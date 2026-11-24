@@ -182,7 +182,7 @@ void JerzyAutoTuneAudioProcessor::prepareToPlay(double sampleRate, int maximumEx
     spectralPrep->prepare(sampleRate); space.prepare(sampleRate); choir.prepare(sampleRate);
     stageA.prepare(sampleRate); stageB.prepare(sampleRate);
     keyDetector.reset(); suggestedKey.store(-1); suggestedConfidence.store(0);
-    heldMidi.fill(false); sustainedMidi.fill(false); sustainPedal=false;sampleClock=0;
+    midiLatch.reset();sampleClock=0;
     hardLow={};hardHigh={};hardEnvelope={};satPrevious={};satDc={};
     for(auto& shaper:saturator)shaper.reset();
     stageBFade.reset(sampleRate,.010);stageBFade.setCurrentAndTargetValue(parameters.getRawParameterValue("comp2Enabled")->load());
@@ -739,6 +739,10 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
        && masterFade.getCurrentValue()<=1.e-6f)
     {
         masterAsleep=true;
+        // The DSP graph sleeps, but MIDI still changes while bypassed.
+        // Tracking notes and pedal changes avoids stuck harmonies on wake.
+        for(const auto metadata:midi)
+            if(metadata.numBytes<=3)midiLatch.receive(metadata.getMessage());
         float inMax=0.f,outMax=0.f;
         // Keep a stable analyzer source for the entire block; choose it
         // from the audible, PDC-DELAYED output instead of future dry input.
@@ -846,11 +850,7 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         {
             if((*midiIt).numBytes>3){++midiIt;continue;}
             const auto message=(*midiIt).getMessage();++midiIt;
-            if(message.isNoteOn()){heldMidi[size_t(message.getNoteNumber())]=true;sustainedMidi[size_t(message.getNoteNumber())]=false;}
-            if(message.isNoteOff()){const auto n=size_t(message.getNoteNumber());heldMidi[n]=false;sustainedMidi[n]=sustainPedal;}
-            if(message.isSustainPedalOn())sustainPedal=true;
-            if(message.isSustainPedalOff()){sustainPedal=false;sustainedMidi.fill(false);}
-            if(message.isAllNotesOff()||message.isAllSoundOff()){heldMidi.fill(false);sustainedMidi.fill(false);}
+            midiLatch.receive(message);
         }
     };
     const auto harmonyRatio=[&](size_t v,const std::array<int,4>& notes)
@@ -891,7 +891,7 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             if(harmonyActive)
             {
                 std::array<const float*,2> in{};for(int ch=0;ch<channels;++ch)in[size_t(ch)]=buffer.getReadPointer(ch,offset);
-                std::array<int,4> notes{-1,-1,-1,-1};int n=0;for(int k=0;k<128&&n<4;++k)if(heldMidi[size_t(k)]||sustainedMidi[size_t(k)])notes[size_t(n++)]=k;
+                std::array<int,4> notes{-1,-1,-1,-1};int n=0;for(int k=0;k<128&&n<4;++k)if(midiLatch.active(k))notes[size_t(n++)]=k;
                 for(size_t v=0;v<4;++v)
                 {
                     harmonyEngines[v]->setTransposeFactor(harmonyRatio(v,notes));
@@ -950,7 +950,7 @@ void JerzyAutoTuneAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
         stretcher.process(inputPointers.data(), count, outputPointers.data(), count);
         std::array<int,4> midiNotes{-1,-1,-1,-1};int noteCount=0;
-        for(int n=0;n<128&&noteCount<4;++n)if(heldMidi[size_t(n)]||sustainedMidi[size_t(n)])midiNotes[size_t(noteCount++)]=n;
+        for(int n=0;n<128&&noteCount<4;++n)if(midiLatch.active(n))midiNotes[size_t(noteCount++)]=n;
         if(harmonyActive || harmonyFade.getCurrentValue()>1.e-5f)
         {
             for(size_t v=0;v<4;++v)
